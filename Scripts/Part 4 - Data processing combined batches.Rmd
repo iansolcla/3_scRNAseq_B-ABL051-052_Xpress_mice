@@ -1,0 +1,835 @@
+---
+title: "Part 4 - Data processing combined batches"
+output: html_notebook
+---
+
+
+#When opening a project that was created in another computer we need to run the following comand in o
+```{r}
+renv::restore()
+```
+
+
+```{r}
+## Load libraries
+
+library(dplyr)
+library(magrittr)
+library(reshape2)
+library(ggplot2)
+library(Seurat)
+library('glmGamPoi')
+library(tidyverse)
+
+library(PCAtools)
+library(pheatmap)
+library(factoextra)
+library(edgeR)
+library(scales)
+library(writexl)
+
+
+```
+
+#Load pilot plate
+```{r}
+
+df_1 <- read.table("../Data/RawData/SS3xpress_B-ABL_pilot_20240115/zUMIs_output/Xpress.readcounts.intron_exon.txt", header = TRUE, sep = "\t")
+
+barcode_annotation_1 <-read.table("../Data/RawData/SS3xpress_B-ABL_pilot_20240115/zUMIs_output/barcode_annotation.txt", header = T, sep = "\t")
+
+gene_names_1 <- read.table("../Data/RawData/SS3xpress_B-ABL_pilot_20240115/zUMIs_output/Xpress.gene_names.txt", header = TRUE, sep = "\t")
+
+barcode_annotation_1$Well_plateID <- paste(barcode_annotation_1$WellID, barcode_annotation_1$plateBC, sep = "_")
+colnames(df_1) <- barcode_annotation_1$Well_plateID[match(colnames(df_1),barcode_annotation_1$XC_DNBPE)]
+df_1 <- df_1[,order(colnames(df_1))]
+
+
+## Metadata pilot plate
+metadata_1 <- read.csv2("../Data/RawData/SS3xpress_B-ABL_pilot_20240115/SS3xpress_metadata.csv", header = TRUE)
+metadata_1 <- metadata_1[order(metadata_1$Plate.ID),]
+metadata_1 <- metadata_1[order(metadata_1$Well),]
+rownames(metadata_1) <- colnames(df_1)
+
+
+
+```
+
+# Load data batch 3 - BCR-ABL 051-052
+```{r}
+## Batch 3
+df_3 <- read.table("../Data/RawData/SS3xpress_B-ABL_051-052_20250617/zUMIs_output/Xpress.readcounts.intron_exon.txt", header = TRUE, sep = "\t")
+
+barcode_annotation_3 <-read.table("../Data/RawData/SS3xpress_B-ABL_051-052_20250617/zUMIs_output/barcode_annotation.txt", header = T, sep = "\t")
+gene_names_3 <- read.table("../Data/RawData/SS3xpress_B-ABL_051-052_20250617/zUMIs_output/Xpress.gene_names.txt", header = TRUE, sep = "\t")
+
+barcode_annotation_3$Well_plateID <- paste(barcode_annotation_3$WellID, barcode_annotation_3$plateBC, sep = "_")
+colnames(df_3) <- barcode_annotation_3$Well_plateID[match(colnames(df_3),barcode_annotation_3$XC_DNBPE_TS)]
+df_3 <- df_3[,order(colnames(df_3))]
+
+## Metadata batch 3
+metadata_3 <- read.csv2("../Data/RawData/SS3xpress_B-ABL_051-052_20250617/SS3xpress_metadata.csv", header = TRUE)
+metadata_3 <- metadata_3[order(metadata_3$Plate.ID),]
+metadata_3 <- metadata_3[order(metadata_3$Well),]
+rownames(metadata_3) <- colnames(df_3)
+
+# Check if Gene names are the same and if yes only keep one file
+#all.equal(gene_names_1,gene_names_2)
+all.equal(gene_names_1,gene_names_3)
+gene_names <- gene_names_3
+rm(gene_names_1, gene_names_3)
+
+
+```
+
+#Asign mice ID in metadata
+
+```{r}
+
+
+#We will add in the metadaa the nummber of the batch
+metadata_1$batch <- 1
+metadata_3$batch <- 3
+
+#We will merge the metadata for every sample
+metadata_combined <- rbind(metadata_1, metadata_3)
+
+#We will annotate the ID of the mice in the metadata based on the sorting notes and the plate information
+
+metadata_combined <- metadata_combined %>%
+  mutate(Mouse.ID = case_when(
+    Plate.ID == 11280577 & Column %in% c(1:7, 22) ~ "Mouse P23-3-1-2 WT",
+    Plate.ID == 11280577 & Column %in% c(8:14, 23) ~ "Mouse P23-3-1-3 WT",
+    Plate.ID == 11280577 & Column %in% c(15:21, 24) ~ "Mouse P23-4-2-4 WT",
+
+    Plate.ID == 11280585 & Column %in% 1:6 ~ "Mouse P23-5-1-8 WT",
+    Plate.ID == 11280585 & Column %in% c(19,20,21) & Row %in% 1:8 ~ "Mouse P23-5-1-8 WT",
+
+    Plate.ID == 11280585 & Column %in% 7:12 ~ "Mouse P23-5-1-9 WT",
+    Plate.ID == 11280585 & Column %in% c(19,20,21) & Row %in% 9:16 ~ "Mouse P23-5-1-9 WT",
+
+    Plate.ID == 11280585 & Column %in% c(13,14,15) ~ "Mouse P23-5-1-10 WT",
+    Plate.ID == 11280585 & Column %in% c(22,23,24) & Row %in% 1:8 ~ "Mouse P23-5-1-10 WT",
+
+    Plate.ID == 11280585 & Column %in% c(16,17,18) ~ "Mouse P23-5-1-11 WT",
+    Plate.ID == 11280585 & Column %in% c(22,23,24) & Row %in% 9:16 ~ "Mouse P23-5-1-11 WT",
+    
+    Plate.ID == 348  & Group == "BCR_ABL_7d" ~ "Mouse 1 BCR-ABL-7d",
+    Plate.ID == 348  & Group == "WT" ~ "Mouse 2 WT",
+    
+    Plate.ID == 11280344  & Group == "BCR_ABL_7d" ~ "Mouse 23HQ25_8_M BCR_ABL_7d",
+    Plate.ID == 11280344  & Group == "BCR_WT" ~ "Mouse 23HQ25_7_F BCR_WT",
+    
+    Plate.ID == 11280345  & Group == "BCR_ABL_7d" ~ "Mouse 23HQ25_8_M BCR_ABL_7d",
+    Plate.ID == 11280345  & Group == "BCR_WT" ~ "Mouse 23HQ25_7_F BCR_WT",
+
+    TRUE ~ NA_character_
+  ))
+```
+
+
+## Load data into Seurat 
+```{r}
+
+#First we will create a seurat object containing independent samples
+dat.seurat_1 <- CreateSeuratObject(counts = df_1, meta.data = metadata_1, min.cells = 10, min.features = 0)
+
+dat.seurat_3 <- CreateSeuratObject(counts = df_3, meta.data = metadata_3, min.cells = 10, min.features = 0)
+
+#In order to create independent samples first we need to merge the count matrixes (df_1 and df_2)
+
+df_combined <- merge(df_1, df_3, by = "row.names", all = FALSE)
+rownames(df_combined) <- df_combined$Row.names
+df_combined <- df_combined[,-1]
+
+
+#Finally we will create an seurat object containing the from the combined count matrix and the combined metadata
+
+dat.seurat.combined <- CreateSeuratObject(counts = df_combined, meta.data = metadata_combined, min.cells = 10, min.features = 0)
+
+
+#Remove the plate "11280345" from the batch 3, it is the only plate that sorted B-cells, T-cells, M-cells, NK-cells, therefore I will focuss in the Cd49b+, Cd49b-, Cd150-, MkP, LMPP and GMP populations
+ 
+dat.seurat.combined <- subset(dat.seurat.combined, Plate.ID != "11280345")
+
+
+#rm(df_1, df_2, df_3, metadata_1, metadata_2, metadata_3, df_combined, metadata_combined)
+
+unique(dat.seurat.combined@meta.data$Plate.ID)
+
+#In order to easy the comprehenssion I will change the name of the plates: 
+
+dat.seurat.combined@meta.data <- dat.seurat.combined@meta.data %>%
+  mutate(Plate.ID = recode(Plate.ID,
+    "348" = "Plate.1",
+    "11280344" = "Plate.2",
+    "11280577" = "Plate.4",
+    "11280585" = "Plate.5"
+  ))
+
+dat.seurat.combined@meta.data <- dat.seurat.combined@meta.data %>%
+  mutate(Plate.Group = paste(Plate.ID, Group, sep = "-"))
+
+#Count mitochondrial percentage
+mt_genes <- gene_names$gene_id[grep("^mt-", gene_names$gene_name)]
+dat.seurat.combined@meta.data$percent.mt <- PercentageFeatureSet(dat.seurat.combined, features = mt_genes)
+
+dat.seurat.combined@meta.data
+#write_xlsx(dat.seurat.combined@meta.data, "../outputs/my_dataframe.xlsx")
+
+```
+
+
+```{r}
+x <- dat.seurat.combined@meta.data
+```
+
+
+```{r}
+# Visualize QC metrics as a violin plot
+VlnPlot(dat.seurat.combined, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3) +
+    scale_y_log10()
+
+VlnPlot(dat.seurat.combined, features = "nCount_RNA") + scale_y_log10() + 
+  geom_hline(yintercept = 50000, linetype = "dashed", color = "red")+ ggtitle("Ttotal RNA count per cell")
+
+VlnPlot(dat.seurat.combined, features = "nFeature_RNA") + scale_y_log10() + 
+  geom_hline(yintercept = 3000, linetype = "dashed", color = "red")+ ggtitle("Number of genes per cell")
+
+VlnPlot(dat.seurat.combined, features = "percent.mt") + 
+  geom_hline(yintercept = 10, linetype = "dashed", color = "red")+ ggtitle(" Mitochondrial gene counts percentage")
+
+#dim(GetAssayData(dat.seurat.combined, assay = "RNA", layer = "counts"))
+dat.seurat.combined <- subset(dat.seurat.combined, nCount_RNA > 50000)
+dat.seurat.combined <- subset(dat.seurat.combined, nFeature_RNA > 3000)
+dat.seurat.combined <- subset(dat.seurat.combined, percent.mt <10)
+
+VlnPlot(dat.seurat.combined, features = "nCount_RNA") + scale_y_log10() + ggtitle("Ttotal RNA count per cell - Filtered")
+VlnPlot(dat.seurat.combined, features = "nFeature_RNA") + scale_y_log10() + ggtitle("Number of genes per cell - Filtered")
+VlnPlot(dat.seurat.combined, features = "percent.mt") + ggtitle(" Mitochondrial gene counts percentage - Filtered")
+
+
+```
+
+
+#Data processing
+```{r}
+
+#write which population to choose
+dat.seurat.combined <- subset(dat.seurat.combined, Population %in% c("B","CD150neg","CD49bneg", "CD49bpos","GMP","LMPP","MkP","Myeloid","NK","T"))
+dat.seurat.combined$Population <- factor(dat.seurat.combined$Population,
+                                          levels = c("CD49bneg", "CD49bpos", "CD150neg", "LMPP", "GMP", "MkP", "B", "T", "NK", "Myeloid"))
+
+# Filter genes - this functions will filter out genes that are not expressed among all single cells across all samples with al least 300 counts
+#May be this funtion is not ver 
+#dat.seurat.combined <- dat.seurat.combined[rowSums(dat.seurat.combined@assays$RNA@layers$counts) > 300,]
+
+# Split object for later integration
+dat.seurat.combined[["RNA"]] <- split(dat.seurat.combined[["RNA"]], f = dat.seurat.combined$Mouse.ID)
+
+# SC Transform
+dat.seurat.combined <- SCTransform(object = dat.seurat.combined, verbose = FALSE, vst.flavor = "v2", return.only.var.genes = FALSE)
+
+# Dimensionality reduction
+dat.seurat.combined <- RunPCA(dat.seurat.combined, features = VariableFeatures(object = dat.seurat.combined), verbose = FALSE)
+dat.seurat.combined <- RunUMAP(dat.seurat.combined, dims = 1:20, verbose = FALSE)
+
+my_colours <- c("CD49bneg" = "#70193b", "CD49bpos" = "#ff6484", "CD150neg" = "#e09e47", "LMPP" = "#ff7206", "GMP" = "#70bd5e", "MkP" = "#9620d7")
+
+DimPlot(dat.seurat.combined, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Population", cols = my_colours)
+DimPlot(dat.seurat.combined, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Group")
+DimPlot(dat.seurat.combined, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Plate.ID")
+DimPlot(dat.seurat.combined, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Plate.Group")
+DimPlot(dat.seurat.combined, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Mouse.ID")
+
+```
+
+# Integrate plates based on Batch with CCA or harmony Integration
+```{r}
+
+dat.seurat.combined <- IntegrateLayers(dat.seurat.combined, method = CCAIntegration, normalization.method = "SCT", orig.reduction = "pca", new.reduction = "cca", verbose = FALSE)
+dat.seurat.combined <- IntegrateLayers(dat.seurat.combined, method = HarmonyIntegration, normalization.method = "SCT", new.reduction = "harmony", verbose = FALSE)
+
+# re-join layers after integration, when we want ot have all the assays in the same matrix
+#dat.seurat.combined[["RNA"]] <- JoinLayers(dat.seurat.combined[["RNA"]])
+
+dat.seurat.combined <- RunUMAP(dat.seurat.combined, reduction = "cca", dims = 1:20, verbose = FALSE, reduction.name = "umap_cca")
+dat.seurat.combined <- RunUMAP(dat.seurat.combined, reduction = "harmony", dims = 1:20, verbose = FALSE, reduction.name = "umap_harmony")
+
+#PLot UMAPs with cca integration
+DimPlot(dat.seurat.combined, reduction = "umap_cca", label = FALSE, repel = TRUE, group.by = "Population", cols = my_colours)
+DimPlot(dat.seurat.combined, reduction = "umap_cca", label = FALSE, repel = TRUE, group.by = "Group")
+DimPlot(dat.seurat.combined, reduction = "umap_cca", label = FALSE, repel = TRUE, group.by = "Plate.ID")
+DimPlot(dat.seurat.combined, reduction = "umap_cca", label = FALSE, repel = TRUE, group.by = "Plate.Group")
+DimPlot(dat.seurat.combined, reduction = "umap_cca", label = FALSE, repel = TRUE, group.by = "Mouse.ID")
+
+#Plot UMAPs with Harmony integration
+DimPlot(dat.seurat.combined, reduction = "umap_harmony", label = FALSE, repel = TRUE, group.by = "Population", cols = my_colours)
+DimPlot(dat.seurat.combined, reduction = "umap_harmony", label = FALSE, repel = TRUE, group.by = "Group")
+DimPlot(dat.seurat.combined, reduction = "umap_harmony", label = FALSE, repel = TRUE, group.by = "Plate.ID")
+DimPlot(dat.seurat.combined, reduction = "umap_harmony", label = FALSE, repel = TRUE, group.by = "Plate.Group")
+DimPlot(dat.seurat.combined, reduction = "umap_harmony", label = FALSE, repel = TRUE, group.by = "Mouse.ID")
+
+```
+
+```{r}
+dat.seurat.combined <- FindNeighbors(dat.seurat.combined, reduction = "cca", dims = 1:20, verbose = FALSE)
+dat.seurat.combined <- FindClusters(dat.seurat.combined, resolution = 0.6, verbose = FALSE, cluster.name = "cca_clusters")
+```
+
+# Make clusters and find markers per hasshed population
+```{r}
+dat.seurat.combined.markers.population <- FindAllMarkers(dat.seurat.combined, only.pos = TRUE, min.pct = 0.5, logfc.threshold = 0.5, group.by = "Population")
+dat.seurat.combined.markers.population <- dat.seurat.combined.markers.population[dat.seurat.combined.markers.population$p_val_adj < 0.01, ]
+top10_combined.population <- dat.seurat.combined.markers.population %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+
+top10_combined.population$gene_name <- gene_names$gene_name[match(top10_combined.population$gene,gene_names$gene_id,top10_combined.population$gene)]
+
+DoHeatmap(dat.seurat.combined, features = top10_combined.population$gene, group.by = "Population") +
+  scale_fill_gradientn(colors = c("blue", "black", "yellow")) +
+  theme(text = element_text(size = 10)) +
+  scale_y_discrete(labels = rev(c(gene_names$gene_name[match(top10_combined.population$gene,gene_names$gene_id,top10_combined.population$gene)])))
+```
+
+# Make clusters and find markers per group
+```{r}
+dat.seurat.combined.markers.group <- FindAllMarkers(dat.seurat.combined, only.pos = TRUE, min.pct = 0.5, logfc.threshold = 0.5, group.by = "Group")
+dat.seurat.combined.markers.group <- dat.seurat.combined.markers.group[dat.seurat.combined.markers.group$p_val_adj < 0.01, ]
+top10_combined.group <- dat.seurat.combined.markers.group %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+
+top10_combined.group$gene_name <- gene_names$gene_name[match(top10_combined.group$gene,gene_names$gene_id,top10_combined.group$gene)]
+
+DoHeatmap(dat.seurat.combined, features = top10_combined.group$gene, group.by = "Group") +
+  scale_fill_gradientn(colors = c("blue", "black", "yellow")) +
+  theme(text = element_text(size = 10)) +
+  scale_y_discrete(labels = rev(c(gene_names$gene_name[match(top10_combined.group$gene,gene_names$gene_id,top10_combined.group$gene)])))
+```
+
+#Pearson correlation coeficient
+
+```{r, fig.width=8, fig.height=6}
+
+library(pheatmap)
+
+#Aggregate samples using pseudobulk reduction - the sample will be grouped by "Group"
+seurat_pseudo_combined_group <- AggregateExpression(dat.seurat.combined, assays = "RNA", return.seurat = TRUE,  group.by = "Group")
+seurat_pseudo_combined_group@meta.data
+
+#Get the count matrix without populations
+seurat_pseudo_combined_group_counts <- as.matrix(GetAssayData(seurat_pseudo_combined_group, assay = "RNA", layer = "counts"))
+
+#Calculate Pearson corelation coefficient (p) without populations
+cor_matrix_pearson_group <- cor(seurat_pseudo_combined_group_counts, method = "pearson")
+cor_matrix_pearson_group
+
+#Generate heatmap with p
+pheatmap(cor_matrix_pearson_group, main = "Pearson Correlation Analysis between Groups", cluster_rows = FALSE, cluster_cols = FALSE)
+
+
+```
+
+#Pearson's correlation coeficient of Group, Population and PLate
+```{r}
+#Aggregate samples using pseudobulk reduction - Populations will be grouped by the genotype and hashed markersand "Group" and Populations"
+#AggregateExpression() created a new orig.ident column with the combination of the gorups set in group.by()
+
+seurat_pseudo_combined_group_population <- AggregateExpression(dat.seurat.combined, assays = "RNA", return.seurat = T, group.by = c("Group","Population"))
+
+#seurat_pseudo_combined_group_population$group.population <- paste(seurat_pseudo_combined_group_population$Group, pseudo_combined_group_population$Population, sep = "_")
+#Idents(pseudo_combined_group_population) <- "group.population"
+
+
+#Get the count matrix
+pseudo_combined_group_population_counts <- as.matrix(GetAssayData(seurat_pseudo_combined_group_population, assay = "RNA", layer = "counts"))
+
+#Perform Pearson corelation analysis of al groups and populations
+cor_matrix_pearson_group_population <- cor(pseudo_combined_group_population_counts, method = "pearson")
+cor_matrix_pearson_group_population
+pheatmap(cor_matrix_pearson_group_population, main = "Pearson Correlation Analysis of Populations", cluster_rows = FALSE, cluster_cols = FALSE)
+
+#PCA
+mydgelist <- DGEList(pseudo_combined_group_population_counts)
+
+#First add the row names into a column
+mydgelist$samples <- mydgelist$samples %>%  rownames_to_column("sample") 
+
+#Duplicate this column
+mydgelist$samples$Group.Population <- mydgelist$samples$sample
+
+#Separate this column into Group and Population and bring the initial rowname back to the rowname of the metadata 
+mydgelist$samples <- mydgelist$samples %>% separate(Group.Population, into = c("Group","Population"), sep = "_") %>% column_to_rownames("sample")
+#Run principal component analysis
+res.pca <- pca(mydgelist$counts, metadata = mydgelist$samples, removeVar = 0.1) #To run this funtion the metadata object need to have the name of the samples as a rownames()
+#Generate PCA plot colouring by Population and the shape by Group
+biplot(res.pca, 
+       shape = "Population", # to asing wich value in the metadata will be used to group the the shape
+       colby = "Group", #to asign which value in the metadata will be used to grop the color
+       lab = NULL,                        #Remove the label of the points
+       legendPosition = "right",          #indicate where the legend is goinf to be, whwn activated it automatically will generate legends for the color and shape
+       pointSize = 2, 
+       title = "PCA Groups and Populations") + 
+  scale_x_continuous(labels = scientific)  +
+  scale_y_continuous(labels = scientific)
+
+```
+
+#Pearson's coerelation coeficient of Plate and Group
+
+```{r}
+#Aggregate samples using pseudobulk reduction - Populations will be grouped by the genotype and hashed markersand "Group" and Populations"
+#AggregateExpression() created a new orig.ident column with the combination of the gorups set in group.by()
+
+seurat_pseudo_combined_group_plate <- AggregateExpression(dat.seurat.combined, assays = "RNA", return.seurat = T, group.by = c( "Plate.ID","Group"))
+
+#Get the count matrix
+seurat_pseudo_combined_group_plate_counts <- as.matrix(GetAssayData(seurat_pseudo_combined_group_plate, assay = "RNA", layer = "counts"))
+
+#Perform Pearson corelation analysis of al groups and populations
+cor_matrix_pearson_group_plate <- cor(seurat_pseudo_combined_group_plate_counts, method = "pearson")
+cor_matrix_pearson_group_plate
+pheatmap(cor_matrix_pearson_group_plate, main = "Pearson Correlation Analysis of Populations", cluster_rows = FALSE, cluster_cols = FALSE)
+
+#PCA
+mydgelist <- DGEList(seurat_pseudo_combined_group_plate_counts)
+
+#First add the row names into a column
+mydgelist$samples <- mydgelist$samples %>%  rownames_to_column("sample") 
+
+#Duplicate this column
+mydgelist$samples$Group.Population <- mydgelist$samples$sample
+
+#Separate this column into Group and Population and bring the initial rowname back to the rowname of the metadata 
+mydgelist$samples <- mydgelist$samples %>% separate(Group.Population, into = c("Plate.ID","Group"), sep = "_") %>% column_to_rownames("sample")
+#Run principal component analysis
+res.pca <- pca(mydgelist$counts, metadata = mydgelist$samples, removeVar = 0.1) #To run this funtion the metadata object need to have the name of the samples as a rownames()
+#Generate PCA plot colouring by Population and the shape by Group
+biplot(res.pca, 
+       shape = "Plate.ID", # to asing wich value in the metadata will be used to group the the shape
+       colby = "Group", #to asign which value in the metadata will be used to grop the color
+       lab = NULL,                        #Remove the label of the points
+       legendPosition = "right",          #indicate where the legend is goinf to be, whwn activated it automatically will generate legends for the color and shape
+       pointSize = 2, 
+       title = "PCA Groups and Populations") + 
+  scale_x_continuous(labels = scientific)  +
+  scale_y_continuous(labels = scientific)
+```
+
+```{r, fig.hight=10, fig-width=12}
+
+
+#Aggregate samples using pseudobulk reduction - Populations will be grouped by the genotype and hashed markersand "Group" and Populations"
+#AggregateExpression() created a new orig.ident column with the combination of the gorups set in group.by()
+
+seurat_pseudo_combined_group_population_plate <- AggregateExpression(dat.seurat.combined, assays = "RNA", return.seurat = T, group.by = c("Group","Population", "Plate.ID"))
+
+#seurat_pseudo_combined_group_population_plate$group.population <- paste(seurat_pseudo_combined_group_population_plate$Group, pseudo_combined_group_population_plate$Population, sep = "_")
+#Idents(pseudo_combined_group_population_plate) <- "group.population"
+
+
+#Get the count matrix
+pseudo_combined_group_population_plate_counts <- as.matrix(GetAssayData(seurat_pseudo_combined_group_population_plate, assay = "RNA", layer = "counts"))
+
+#Perform Pearson corelation analysis of al groups and populations
+cor_matrix_pearson_group_population_plate <- cor(pseudo_combined_group_population_plate_counts, method = "pearson")
+cor_matrix_pearson_group_population_plate
+pheatmap(cor_matrix_pearson_group_population_plate, main = "Pearson Correlation Analysis of Populations", cluster_rows = FALSE, cluster_cols = FALSE)
+
+#PCA
+mydgelist <- DGEList(pseudo_combined_group_population_plate_counts)
+
+#First add the row names into a column
+mydgelist$samples <- mydgelist$samples %>%  rownames_to_column("sample") 
+
+#Duplicate this column
+mydgelist$samples$Group.Population <- mydgelist$samples$sample
+
+#Separate this column into Group and Population and bring the initial rowname back to the rowname of the metadata 
+mydgelist$samples <- mydgelist$samples %>% separate(Group.Population, into = c("Group","Population", "Plate.ID"), sep = "_") %>% column_to_rownames("sample")
+#Run principal component analysis
+res.pca <- pca(mydgelist$counts, metadata = mydgelist$samples, removeVar = 0.1) #To run this funtion the metadata object need to have the name of the samples as a rownames()
+
+#Generate PCA plot colouring by Population and the shape by Group
+biplot(res.pca, 
+       shape = "Plate.ID", # to asing wich value in the metadata will be used to group the the shape
+       colby = "Group", #to asign which value in the metadata will be used to grop the color
+       lab = NULL,                        #Remove the label of the points
+       legendPosition = "right",          #indicate where the legend is goinf to be, whwn activated it automatically will generate legends for the color and shape
+       pointSize = 2, 
+       title = "PCA Groups and Populations") + 
+  scale_x_continuous(labels = scientific)  +
+  scale_y_continuous(labels = scientific)
+
+biplot(res.pca, 
+       shape = "Plate.ID", # to asing wich value in the metadata will be used to group the the shape
+       colby = "Population", #to asign which value in the metadata will be used to grop the color
+       lab = NULL,                        #Remove the label of the points
+       legendPosition = "right",          #indicate where the legend is goinf to be, whwn activated it automatically will generate legends for the color and shape
+       pointSize = 2, 
+       title = "PCA Groups and Populations") + 
+  scale_x_continuous(labels = scientific)  +
+  scale_y_continuous(labels = scientific)
+
+biplot(res.pca, 
+       shape = "Population", # to asing wich value in the metadata will be used to group the the shape
+       colby = "Group", #to asign which value in the metadata will be used to grop the color
+       lab = NULL,                        #Remove the label of the points
+       legendPosition = "right",          #indicate where the legend is goinf to be, whwn activated it automatically will generate legends for the color and shape
+       pointSize = 2, 
+       title = "PCA Groups and Populations") + 
+  scale_x_continuous(labels = scientific)  +
+  scale_y_continuous(labels = scientific)
+```
+
+
+
+#Pearson's correlation coeficient Mouse.ID, Group and Plate ID
+```{r, fig.hight=10, fig-width=12}
+#Aggregate samples using pseudobulk reduction - Populations will be grouped by the genotype and hashed markersand "Group" and Populations"
+#AggregateExpression() created a new orig.ident column with the combination of the gorups set in group.by()
+
+seurat_pseudo_combined_Mouse.ID <- AggregateExpression(dat.seurat.combined, assays = "RNA", return.seurat = T, group.by = c("Mouse.ID"))
+
+#Get the count matrix
+pseudo_combined_Mouse.ID_counts <- as.matrix(GetAssayData(seurat_pseudo_combined_Mouse.ID, assay = "RNA", layer = "counts"))
+
+#Perform Pearson corelation analysis of al groups and populations
+cor_matrix_pearson_Mouse.ID <- cor(pseudo_combined_Mouse.ID_counts, method = "pearson")
+cor_matrix_pearson_Mouse.ID[upper.tri(cor_matrix_pearson_Mouse.ID)] <- NA
+pheatmap(cor_matrix_pearson_Mouse.ID, main = "Pearson Correlation Analysis of Populations", cluster_rows = FALSE, cluster_cols = FALSE)
+cor_matrix_pearson_Mouse.ID
+
+
+#Aggregrate the seurat data by Mouse.ID, Group, and Plate.ID
+seurat_pseudo_combined_Mouse.ID <- AggregateExpression(dat.seurat.combined, assays = "RNA", return.seurat = T, group.by = c("Mouse.ID", "Group", "Plate.ID"))
+
+#Get the count matrix
+pseudo_combined_Mouse.ID_counts <- as.matrix(GetAssayData(seurat_pseudo_combined_Mouse.ID, assay = "RNA", layer = "counts"))
+#PCA
+mydgelist <- DGEList(pseudo_combined_Mouse.ID_counts)
+
+#First add the row names into a column
+mydgelist$samples <- mydgelist$samples %>% rownames_to_column("sample") 
+
+#Duplicate this column
+mydgelist$samples$Sample <- mydgelist$samples$sample
+
+#Separate this column into Group and Population and bring the initial rowname back to the rowname of the metadata 
+mydgelist$samples <- mydgelist$samples %>% separate(Sample, into = c("Mouse.ID", "Group", "Plate.ID"), sep = "_") %>% column_to_rownames("sample")
+#Run principal component analysis
+res.pca <- pca(mydgelist$counts, metadata = mydgelist$samples, removeVar = 0.1) #To run this funtion the metadata object need to have the name of the samples as a rownames()
+
+
+#Generate PCA plot colouring by Population and the shape by Group
+biplot(res.pca,
+       shape = "Group",   # to asing wich value in the metadata will be used to group the the shape
+       colby = "Mouse.ID", #to asign which value in the metadata will be used to grop the color
+       lab = NULL,                        #Remove the label of the points
+       legendPosition = "right",          #indicate where the legend is goinf to be, whwn activated it automatically will generate legends for the color and shape
+       pointSize = 2, 
+       title = "PCA Group - Mouse.ID") + 
+  scale_x_continuous(labels = scientific)  +
+  scale_y_continuous(labels = scientific)
+
+biplot(res.pca,
+       shape = "Plate.ID",   # to asing wich value in the metadata will be used to group the the shape
+       colby = "Mouse.ID", #to asign which value in the metadata will be used to grop the color
+       lab = NULL,                        #Remove the label of the points
+       legendPosition = "right",          #indicate where the legend is goinf to be, whwn activated it automatically will generate legends for the color and shape
+       pointSize = 2, 
+       title = "PCA Mouse.ID - Plate.ID") + 
+  scale_x_continuous(labels = scientific)  +
+  scale_y_continuous(labels = scientific)
+
+```
+
+
+```{r}
+
+
+#Aggregate samples using pseudobulk reduction - Populations will be grouped by the genotype and hashed markersand "Group" and Populations"
+#AggregateExpression() created a new orig.ident column with the combination of the gorups set in group.by()
+
+seurat_pseudo_combined_group_population_plate_mouse <- AggregateExpression(dat.seurat.combined, assays = "RNA", return.seurat = T, group.by = c("Population", "Mouse.ID", "Group"))
+
+#seurat_pseudo_combined_group_population_plate$group.population <- paste(seurat_pseudo_combined_group_population_plate$Group, pseudo_combined_group_population_plate$Population, sep = "_")
+#Idents(pseudo_combined_group_population_plate) <- "group.population"
+
+
+#Get the count matrix
+pseudo_combined_group_population_plate_mouse_counts <- as.matrix(GetAssayData(seurat_pseudo_combined_group_population_plate_mouse, assay = "RNA", layer = "counts"))
+
+#Perform Pearson corelation analysis of al groups and populations
+cor_matrix_pearson_group_population_plate_mouse <- cor(pseudo_combined_group_population_plate_mouse_counts, method = "pearson")
+cor_matrix_pearson_group_population_plate_mouse
+pheatmap(cor_matrix_pearson_group_population_plate_mouse, main = "Pearson Correlation Analysis of Populations", cluster_rows = FALSE, cluster_cols = FALSE)
+
+#PCA
+mydgelist <- DGEList(pseudo_combined_group_population_plate_mouse_counts)
+
+#First add the row names into a column
+mydgelist$samples <- mydgelist$samples %>%  rownames_to_column("sample") 
+
+#Duplicate this column
+mydgelist$samples$Group.Population <- mydgelist$samples$sample
+
+#Separate this column into Group and Population and bring the initial rowname back to the rowname of the metadata 
+mydgelist$samples <- mydgelist$samples %>% separate(Group.Population, into = c("Population", "Mouse.ID", "Group"), sep = "_") %>% column_to_rownames("sample")
+#Run principal component analysis
+res.pca <- pca(mydgelist$counts, metadata = mydgelist$samples, removeVar = 0.1) #To run this funtion the metadata object need to have the name of the samples as a rownames()
+#Generate PCA plot colouring by Population and the shape by Group
+biplot(res.pca, 
+       shape = "Population", # to asing wich value in the metadata will be used to group the the shape
+       colby = "Mouse.ID", #to asign which value in the metadata will be used to grop the color
+       lab = NULL,                        #Remove the label of the points
+       legendPosition = "right",          #indicate where the legend is goinf to be, whwn activated it automatically will generate legends for the color and shape
+       pointSize = 2, 
+       title = "PCA Groups and Populations") + 
+  scale_x_continuous(labels = scientific)  +
+  scale_y_continuous(labels = scientific)
+
+biplot(res.pca, # to asing wich value in the metadata will be used to group the the shape
+       colby = "Mouse.ID", #to asign which value in the metadata will be used to grop the color
+       shape = "Group",
+       lab = NULL,                        #Remove the label of the points
+       legendPosition = "right",          #indicate where the legend is goinf to be, whwn activated it automatically will generate legends for the color and shape
+       pointSize = 2, 
+       title = "PCA Groups and Populations") + 
+  scale_x_continuous(labels = scientific)  +
+  scale_y_continuous(labels = scientific)
+
+```
+
+
+
+#PCA with PCAtools (Bioconductor)
+
+
+  if (!requireNamespace('BiocManager', quietly = TRUE))
+    install.packages('BiocManager')
+
+  BiocManager::install('PCAtools')
+
+
+
+```{r}
+
+#Create a DGE object to store the count matrix
+mydgelist <- DGEList(pseudo_combined_group_population_plate_mouse_counts)
+
+#See what is stored in this object
+names(mydgelist)
+
+#In order to run PCA we first need to annotate the Population and Group in separate columns. The row names has anotated the POpulation and the Group in the same value separated by a "_"
+rownames(mydgelist$samples)
+
+#First add the row names into a column
+mydgelist$samples <- mydgelist$samples %>%  rownames_to_column("sample") 
+
+#Duplicate this column
+mydgelist$samples$Group.Population <- mydgelist$samples$sample
+
+#Separate this column into Group and Population and bring the initial rowname back to the rowname of the metadata 
+mydgelist$samples <- mydgelist$samples %>% separate(Group.Population, into = c("Group", "Mouse.ID"), sep = "_") %>% column_to_rownames("sample")
+
+
+#Run principal component analysis
+
+res.pca <- pca(mydgelist$counts, metadata = mydgelist$samples, removeVar = 0.1) #To run this funtion the metadata object need to have the name of the samples as a rownames()
+res.pca
+
+#Generate PCA plot colouring by Population and the shape by Group
+
+biplot(res.pca, 
+       shape = "Group", # to asing wich value in the metadata will be used to group the the shape
+       colby = "Population", #to asign which value in the metadata will be used to grop the color
+       lab = NULL,                        #Remove the label of the points
+       legendPosition = "right",          #indicate where the legend is goinf to be, whwn activated it automatically will generate legends for the color and shape
+       pointSize = 2, 
+       title = "PCA Groups and Populations") + 
+  scale_x_continuous(labels = scientific)  +
+  scale_y_continuous(labels = scientific)
+  #to write the labs in the x axis in scientific numbering
+
+#biplot(res.pca, colby = "Group")
+biplot(res.pca, 
+       colby = "Group", 
+       lab = NULL,                        
+       legendPosition = "right",          
+       pointSize = 2, 
+       title = "PCA Groups") + 
+  scale_x_continuous(labels = scientific)  +
+  scale_y_continuous(labels = scientific)
+
+
+biplot(res.pca, 
+       shape = "Plate.ID",
+       colby = "Population",
+       lab = NULL,         
+       legendPosition = "right",
+       pointSize = 2,
+       title = "PCA Plate.ID and Populations") +
+  scale_x_continuous(labels = scientific)  +
+  scale_y_continuous(labels = scientific)
+
+
+#biplot(res.pca, colby = "Group")
+biplot(res.pca, 
+       colby = "Mouse.ID", 
+       lab = NULL,                        
+       legendPosition = "right",          
+       pointSize = 2, 
+       title = "PCA Groups") + 
+  scale_x_continuous(labels = scientific)  +
+  scale_y_continuous(labels = scientific)
+
+
+```
+
+
+#PCA of pseudobulk agrupation
+
+```{r}
+#demultiplex data
+
+#plot PCA grouped with hashed samples and group
+
+
+
+
+
+#Not working
+#mydgelist <- DGEList(pseudo_combined_group_population_matrix, ,group=c(3,3,3,3,3,3,3,3,3,3,2,2,2,2,2,2,2,2,2,2,1,1,1,1,1,1))
+
+mydgelist <- DGEList(pseudo_combined_group_population_counts)
+mydgelist$samples
+
+#mydgelist_samples <- mydgelist$samples %>% rownames_to_column("sample") %>% separate(sample, into =c("genotype", "replicate"))
+
+mydgelist$samples <- mydgelist$samples %>%  rownames_to_column("sample") %>%
+  separate(sample, into = c("Group", "Population"), sep = "_")
+
+mydgelist_cpm <- cpm(mydgelist$counts)
+
+#Coloured by Group
+
+res.pca <- prcomp(t(mydgelist$counts))
+#colors <- as.factor(str_split(rownames(mydgelist$samples), "_", simplify = TRUE)[,1])
+
+#Grouped by Group
+fviz_pca_ind(res.pca,
+             palette = "Set1",
+             col.ind = mydgelist$samples$Group,
+             pointshape = 19,   # <-- THIS is the key argument
+             pointsize = 2,
+             repel = FALSE,    # Avoid text overlapping
+             title = "PCA plot of human data",
+             label ="none",
+             mean.point = FALSE
+             )
+
+#Grouped by Population
+fviz_pca_ind(res.pca,
+             palette = NULL,
+             col.ind = mydgelist$samples$Population,
+             pointshape = 19,   # <-- THIS is the key argument
+             pointsize = 2,
+             repel = FALSE,    # Avoid text overlapping
+             title = "PCA plot of human data",
+             label ="none",
+             mean.point = FALSE
+             )
+
+#Grouped by Group in colour and Population by shape - Not Working
+fviz_pca_ind(res.pca,
+             palette = NULL,
+             col.ind = mydgelist$samples$Population,
+             pointshape = 19,   # <-- THIS is the key argument
+             pointsize = 2,
+             repel = FALSE,    # Avoid text overlapping
+             title = "PCA plot of human data",
+             label ="none",
+             mean.point = FALSE
+             )
+
+fviz_pca_ind(res.pca,
+             palette = NULL,
+             col.ind = mydgelist$samples$Group,
+             habillage = mydgelist$samples$Population,
+             pointsize = 2,
+             repel = FALSE,    # Avoid text overlapping
+             title = "PCA plot of human data",
+             label ="none",
+             mean.point = FALSE
+             ) 
+
+mydgelist_samples$Population
+
+?fviz_pca_ind()
+#Cd49b+, Cd49b-, Cd150-, MkP, LMPP, GMP
+
+#Coloured by Population
+colors <- mydgelist_samples$Population
+
+fviz_pca_ind(res.pca,
+             palette = "Set1",
+             col.ind = mydgelist_samples$Population,
+             repel = FALSE,    # Avoid text overlapping
+             title = "PCA plot of human data",
+             label ="none",
+             mean.point = FALSE
+             )
+
+#Coloured by Group and Population
+
+fviz_pca_ind(res.pca,
+             palette = "Set1",
+             col.ind = mydgelist_samples$Group,
+             habillage = mydgelist_samples$Population,
+             repel = FALSE,    # Avoid text overlapping
+             title = "PCA plot of human data",
+             label ="none",
+             mean.point = FALSE
+             ) 
+
+
+#Lin; B-cells, T-cells, M-cells, NK-cells
+
+
+
+
+
+fviz_pca_ind(
+  res.pca,
+  palette = "Set1",
+  repel = TRUE,
+  title = "PCA plot of human data"
+)
+
+fviz_pca_ind(
+  res.pca,
+  habillage = pseudo_3_group_population$group,  # <- factor variable
+  palette = "Set1",
+  repel = TRUE,
+  title = "PCA plot of human data"
+)
+
+```
+
+```{r}
+p <- fviz_pca_ind(
+  res.pca,
+  habillage = mydgelist_samples$Group,
+  palette = "Set1",
+  repel = FALSE,
+  label = "none",
+  mean.point = FALSE
+)
+
+p$data$Population <- mydgelist_samples$Population
+
+p +
+  geom_point(aes(shape = Population)) +
+  labs(color = "Group", shape = "Population")
+```
+
+

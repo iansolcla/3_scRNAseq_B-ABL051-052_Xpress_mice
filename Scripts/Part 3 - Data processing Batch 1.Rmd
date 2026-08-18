@@ -1,0 +1,341 @@
+---
+title: "Part 3 - Data processing Batch 1"
+output: html_notebook
+---
+
+```{r}
+## Load libraries
+
+library(dplyr)
+library(magrittr)
+library(reshape2)
+library(ggplot2)
+library(Seurat)
+library('glmGamPoi')
+library(tidyverse)
+
+library(PCAtools)
+library(pheatmap)
+library(factoextra)
+library(edgeR)
+library(scales)
+
+
+```
+
+## Load data into Seurat 
+```{r}
+
+#First we will create a seurat object containing independent samples
+dat.seurat_1 <- CreateSeuratObject(counts = df_1, meta.data = metadata_1, min.cells = 10, min.features = 0)
+dat.seurat_1@meta.data
+
+#We asigned batch 1 in the metadata
+metadata_1$batch <- 1
+```
+
+
+# Data processing
+```{r}
+#dat.seurat_1_filtered
+#dat.seurat_1
+
+
+#dim(GetAssayData(dat.seurat_1, assay = "RNA", layer = "counts"))
+dat.seurat_1 <- subset(dat.seurat_1, nCount_RNA > 50000)
+dat.seurat_1 <- subset(dat.seurat_1, nFeature_RNA > 3000)
+
+#write which population to choose
+dat.seurat_1 <- subset(dat.seurat_1, Population %in% c("B","CD150neg","CD49bneg", "CD49bpos","GMP","LMPP","MkP","Myeloid","NK","T"))
+dat.seurat_1$Population <- factor(dat.seurat_1$Population,
+                                          levels = c("CD49bneg", "CD49bpos", "CD150neg", "LMPP", "GMP", "MkP", "B", "T", "NK", "Myeloid"))
+
+# Filter genes
+dat.seurat_1 <- dat.seurat_1[rowSums(dat.seurat_1@assays$RNA@layers$counts) > 300,]
+
+dat.seurat_1 <- SCTransform(object = dat.seurat_1, verbose = FALSE, vst.flavor = "v2", return.only.var.genes = FALSE)
+
+dat.seurat_1 <- RunPCA(dat.seurat_1, features = VariableFeatures(object = dat.seurat_1), verbose = FALSE)
+dat.seurat_1 <- RunUMAP(dat.seurat_1, dims = 1:20, verbose = FALSE)
+
+my_colours <- c("CD49bneg" = "#70193b", "CD49bpos" = "#ff6484", "CD150neg" = "#e09e47", "LMPP" = "#ff7206", "GMP" = "#70bd5e", "MkP" = "#9620d7", "B" = "#014784", "T" = "#9ca6f1", "NK" = "#00bbd6", "Myeloid" = "#4a6800", "transplanted" = "grey")
+
+DimPlot(dat.seurat_1, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Population", cols = my_colours)
+DimPlot(dat.seurat_1, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Group")
+```
+
+```{r}
+p <- DimPlot(dat.seurat_1, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Population", cols = my_colours)
+
+HoverLocator(p, information = FetchData(object = dat.seurat_1, vars = 'Well'))
+```
+
+# Make clusters and find markers per hasshed population
+```{r}
+dat.seurat_1.markers.population <- FindAllMarkers(dat.seurat_1, only.pos = TRUE, min.pct = 0.5, logfc.threshold = 0.5, group.by = "Population")
+dat.seurat_1.markers.population <- dat.seurat_1.markers.population[dat.seurat_1.markers.population$p_val_adj < 0.01, ]
+top10_1.population <- dat.seurat_1.markers.population %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+
+top10_1.population$gene_name <- gene_names$gene_name[match(top10_1.population$gene,gene_names$gene_id,top10_1.population$gene)]
+
+DoHeatmap(dat.seurat_1, features = top10_1.population$gene, group.by = "Population") +
+  scale_fill_gradientn(colors = c("blue", "black", "yellow")) +
+  theme(text = element_text(size = 10)) +
+  scale_y_discrete(labels = rev(c(gene_names$gene_name[match(top10_1.population$gene,gene_names$gene_id,top10_1.population$gene)])))
+```
+
+# Make clusters and find markers per group
+```{r}
+dat.seurat_1.markers.group <- FindAllMarkers(dat.seurat_1, only.pos = TRUE, min.pct = 0.5, logfc.threshold = 0.5, group.by = "Group")
+dat.seurat_1.markers.group <- dat.seurat_1.markers.group[dat.seurat_1.markers.group$p_val_adj < 0.01, ]
+top10_1.group <- dat.seurat_1.markers.group %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+
+top10_1.group$gene_name <- gene_names$gene_name[match(top10_1.group$gene,gene_names$gene_id,top10_1.group$gene)]
+
+DoHeatmap(dat.seurat_1, features = top10_1.group$gene, group.by = "Group") +
+  scale_fill_gradientn(colors = c("blue", "black", "yellow")) +
+  theme(text = element_text(size = 10)) +
+  scale_y_discrete(labels = rev(c(gene_names$gene_name[match(top10_1.group$gene,gene_names$gene_id,top10_1.group$gene)])))
+```
+
+#Pearson correlation coeficient
+
+```{r, fig.width=8, fig.height=6}
+library(pheatmap)
+
+#Aggregate samples using pseudobulk reduction - the sample will be grouped by "Group"
+seurat_pseudo_1_group <- AggregateExpression(dat.seurat_1, assays = "RNA", return.seurat = TRUE,  group.by = "Group")
+seurat_pseudo_1_group@meta.data
+
+
+#Get the count matrix without populations
+seurat_pseudo_1_group_counts <- as.matrix(GetAssayData(seurat_pseudo_1_group, assay = "RNA", layer = "counts"))
+
+#Calculate Pearson corelation coefficient (p) without populations
+cor_matrix_pearson_group <- cor(seurat_pseudo_1_group_counts, method = "pearson")
+cor_matrix_pearson_group
+
+#Generate heatmap with p
+pheatmap(cor_matrix_pearson_group, main = "Pearson Correlation Analysis between Groups", cluster_rows = FALSE, cluster_cols = FALSE)
+
+
+```
+
+```{r}
+#Aggregate samples using pseudobulk reduction - Populations will be grouped by the genotype and hashed markersand "Group" and Populations"
+#AggregateExpression() created a new orig.ident column with the combination of the gorups set in group.by()
+
+seurat_pseudo_1_group_population <- AggregateExpression(dat.seurat_1, assays = "RNA", return.seurat = T, group.by = c("Group","Population"))
+
+#seurat_pseudo_1_group_population$group.population <- paste(seurat_pseudo_1_group_population$Group, pseudo_1_group_population$Population, sep = "_")
+#Idents(pseudo_1_group_population) <- "group.population"
+
+
+#Get the count matrix
+pseudo_1_group_population_counts <- as.matrix(GetAssayData(seurat_pseudo_1_group_population, assay = "RNA", layer = "counts"))
+
+#Perform Pearson corelation analysis of al groups and populations
+cor_matrix_pearson_group_population <- cor(pseudo_1_group_population_counts, method = "pearson")
+cor_matrix_pearson_group_population
+pheatmap(cor_matrix_pearson_group_population, main = "Pearson Correlation Analysis of Populations", cluster_rows = FALSE, cluster_cols = FALSE)
+```
+
+
+#PCA with PCAtools (Bioconductor)
+
+
+  if (!requireNamespace('BiocManager', quietly = TRUE))
+    install.packages('BiocManager')
+
+  BiocManager::install('PCAtools')
+
+
+
+```{r}
+
+#Create a DGE object to store the count matrix
+mydgelist <- DGEList(pseudo_1_group_population_counts)
+
+#See what is stored in this object
+names(mydgelist)
+
+#In order to run PCA we first need to annotate the Population and Group in separate columns. The row names has anotated the POpulation and the Group in the same value separated by a "_"
+rownames(mydgelist$samples)
+
+#First add the row names into a column
+mydgelist$samples <- mydgelist$samples %>%  rownames_to_column("sample") 
+
+#Duplicate this column
+mydgelist$samples$Group.Population <- mydgelist$samples$sample
+
+#Separate this column into Group and Population and bring the initial rowname back to the rowname of the metadata 
+mydgelist$samples <- mydgelist$samples %>% separate(Group.Population, into = c("Group", "Population"), sep = "_") %>% column_to_rownames("sample")
+
+
+#Run principal component analysis
+
+res.pca <- pca(mydgelist$counts, metadata = mydgelist$samples, removeVar = 0.1) #To run this funtion the metadata object need to have the name of the samples as a rownames()
+
+#Generate PCA plot colouring by Population and the shape by Group
+
+biplot(res.pca, 
+       shape = "Group", # to asing wich value in the metadata will be used to group the the shape
+       colby = "Population", #to asign which value in the metadata will be used to grop the color
+       lab = NULL,                        #Remove the label of the points
+       legendPosition = "right",          #indicate where the legend is goinf to be, whwn activated it automatically will generate legends for the color and shape
+       pointSize = 2, 
+       title = "PCA Groups and Populations") + 
+  scale_x_continuous(labels = scientific)  +
+  scale_y_continuous(labels = scientific)
+  #to write the labs in the x axis in scientific numbering
+
+
+```
+
+
+#PCA of pseudobulk agrupation
+
+```{r}
+#demultiplex data
+
+#plot PCA grouped with hashed samples and group
+
+
+
+
+
+#Not working
+#mydgelist <- DGEList(pseudo_1_group_population_matrix, ,group=c(3,3,3,3,3,3,3,3,3,3,2,2,2,2,2,2,2,2,2,2,1,1,1,1,1,1))
+
+mydgelist <- DGEList(pseudo_1_group_population_counts)
+mydgelist$samples
+
+#mydgelist_samples <- mydgelist$samples %>% rownames_to_column("sample") %>% separate(sample, into =c("genotype", "replicate"))
+
+mydgelist$samples <- mydgelist$samples %>%  rownames_to_column("sample") %>%
+  separate(sample, into = c("Group", "Population"), sep = "_")
+
+mydgelist_cpm <- cpm(mydgelist$counts)
+
+#Coloured by Group
+
+res.pca <- prcomp(t(mydgelist$counts))
+#colors <- as.factor(str_split(rownames(mydgelist$samples), "_", simplify = TRUE)[,1])
+
+#Grouped by Group
+fviz_pca_ind(res.pca,
+             palette = "Set1",
+             col.ind = mydgelist$samples$Group,
+             pointshape = 19,   # <-- THIS is the key argument
+             pointsize = 2,
+             repel = FALSE,    # Avoid text overlapping
+             title = "PCA plot of human data",
+             label ="none",
+             mean.point = FALSE
+             )
+
+#Grouped by Population
+fviz_pca_ind(res.pca,
+             palette = NULL,
+             col.ind = mydgelist$samples$Population,
+             pointshape = 19,   # <-- THIS is the key argument
+             pointsize = 2,
+             repel = FALSE,    # Avoid text overlapping
+             title = "PCA plot of human data",
+             label ="none",
+             mean.point = FALSE
+             )
+
+#Grouped by Group in colour and Population by shape - Not Working
+fviz_pca_ind(res.pca,
+             palette = NULL,
+             col.ind = mydgelist$samples$Population,
+             pointshape = 19,   # <-- THIS is the key argument
+             pointsize = 2,
+             repel = FALSE,    # Avoid text overlapping
+             title = "PCA plot of human data",
+             label ="none",
+             mean.point = FALSE
+             )
+
+fviz_pca_ind(res.pca,
+             palette = NULL,
+             col.ind = mydgelist$samples$Group,
+             habillage = mydgelist$samples$Population,
+             pointsize = 2,
+             repel = FALSE,    # Avoid text overlapping
+             title = "PCA plot of human data",
+             label ="none",
+             mean.point = FALSE
+             ) 
+
+mydgelist_samples$Population
+
+?fviz_pca_ind()
+#Cd49b+, Cd49b-, Cd150-, MkP, LMPP, GMP
+
+#Coloured by Population
+colors <- mydgelist_samples$Population
+
+fviz_pca_ind(res.pca,
+             palette = "Set1",
+             col.ind = mydgelist_samples$Population,
+             repel = FALSE,    # Avoid text overlapping
+             title = "PCA plot of human data",
+             label ="none",
+             mean.point = FALSE
+             )
+
+#Coloured by Group and Population
+
+fviz_pca_ind(res.pca,
+             palette = "Set1",
+             col.ind = mydgelist_samples$Group,
+             habillage = mydgelist_samples$Population,
+             repel = FALSE,    # Avoid text overlapping
+             title = "PCA plot of human data",
+             label ="none",
+             mean.point = FALSE
+             ) 
+
+
+#Lin; B-cells, T-cells, M-cells, NK-cells
+
+
+
+
+
+fviz_pca_ind(
+  res.pca,
+  palette = "Set1",
+  repel = TRUE,
+  title = "PCA plot of human data"
+)
+
+fviz_pca_ind(
+  res.pca,
+  habillage = pseudo_3_group_population$group,  # <- factor variable
+  palette = "Set1",
+  repel = TRUE,
+  title = "PCA plot of human data"
+)
+
+```
+
+```{r}
+p <- fviz_pca_ind(
+  res.pca,
+  habillage = mydgelist_samples$Group,
+  palette = "Set1",
+  repel = FALSE,
+  label = "none",
+  mean.point = FALSE
+)
+
+p$data$Population <- mydgelist_samples$Population
+
+p +
+  geom_point(aes(shape = Population)) +
+  labs(color = "Group", shape = "Population")
+```
+

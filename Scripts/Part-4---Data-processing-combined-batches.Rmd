@@ -1,0 +1,341 @@
+---
+title: "Part 4 - Data processing combined batches"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+#When opening a project that was created in another computer we need to run the following comand in o
+```{r}
+#renv::restore()
+```
+
+
+```{r}
+## Load libraries
+
+library(dplyr)
+library(magrittr)
+library(reshape2)
+library(ggplot2)
+library(Seurat)
+library('glmGamPoi')
+library(tidyverse)
+
+library(PCAtools)
+library(pheatmap)
+library(factoextra)
+library(edgeR)
+library(scales)
+library(writexl)
+
+
+```
+
+#Load pilot plate
+```{r}
+
+#Read count matrix
+  df_1 <- read.table("../Data/RawData/SS3xpress_B-ABL_pilot_20240115/zUMIs_output/Xpress.readcounts.intron_exon.txt", header = TRUE, sep = "\t")
+#Read the annotation file - Where is written the Plate ID and well ID of each cell barcode
+  barcode_annotation_1 <-read.table("../Data/RawData/SS3xpress_B-ABL_pilot_20240115/zUMIs_output/barcode_annotation.txt", header = T, sep = "\t")
+#Gene list with all the gene IDs and gene names
+  gene_names_1 <- read.table("../Data/RawData/SS3xpress_B-ABL_pilot_20240115/zUMIs_output/Xpress.gene_names.txt", header = TRUE, sep = "\t")
+#Create a new coluimn in the anotation with teh PlateID and WellID combiined
+  barcode_annotation_1$Well_plateID <- paste(barcode_annotation_1$WellID, barcode_annotation_1$plateBC, sep = "_")
+#Replace the cell barcode of the count matrix weith the unique Well_plateID 
+  colnames(df_1) <- barcode_annotation_1$Well_plateID[match(colnames(df_1),barcode_annotation_1$XC_DNBPE)]
+  df_1 <- df_1[,order(colnames(df_1))]
+#Read the metadata file with information about: Sorted population, Age, and Group
+  metadata_1 <- read.csv2("../Data/RawData/SS3xpress_B-ABL_pilot_20240115/SS3xpress_metadata.csv", header = TRUE)
+#include the Well_plateID (names of the count matrix) in the metadata
+  metadata_1 <- metadata_1[order(metadata_1$Plate.ID),]
+  metadata_1 <- metadata_1[order(metadata_1$Well),]
+  rownames(metadata_1) <- colnames(df_1)
+
+```
+
+# Load data batch 3 - BCR-ABL 051-052
+```{r}
+#Read count matrix
+  df_3 <- read.table("../Data/RawData/SS3xpress_B-ABL_051-052_20250617/zUMIs_output/Xpress.readcounts.intron_exon.txt", header = TRUE, sep = "\t")
+#Read the annotation file - Where is written the Plate ID and well ID of each cell barcode
+  barcode_annotation_3 <-read.table("../Data/RawData/SS3xpress_B-ABL_051-052_20250617/zUMIs_output/barcode_annotation.txt", header = T, sep = "\t")
+#Gene list with all the gene IDs and gene names
+  gene_names_3 <- read.table("../Data/RawData/SS3xpress_B-ABL_051-052_20250617/zUMIs_output/Xpress.gene_names.txt", header = TRUE, sep = "\t")
+#Create a new coluimn in the metadata with teh PlateID and WellID combiined
+  barcode_annotation_3$Well_plateID <- paste(barcode_annotation_3$WellID, barcode_annotation_3$plateBC, sep = "_")
+#Replace the cell barcode of the count matrix weith the unique Well_plateID 
+  colnames(df_3) <- barcode_annotation_3$Well_plateID[match(colnames(df_3),barcode_annotation_3$XC_DNBPE_TS)]
+df_3 <- df_3[,order(colnames(df_3))]
+#Read the metadata file with information about: Sorted population, Age, and Group
+  metadata_3 <- read.csv2("../Data/RawData/SS3xpress_B-ABL_051-052_20250617/SS3xpress_metadata.csv", header = TRUE)
+  metadata_3 <- metadata_3[order(metadata_3$Plate.ID),]
+  metadata_3 <- metadata_3[order(metadata_3$Well),]
+  rownames(metadata_3) <- colnames(df_3)
+
+#include the Well_plateID (names of the count matrix) in the metadata
+  all.equal(gene_names_1,gene_names_3)
+  gene_names <- gene_names_3
+  rm(gene_names_1, gene_names_3)
+
+
+```
+
+#Asign mice ID in metadata
+
+```{r}
+
+
+#We will add in the metadaa the nummber of the batch
+metadata_1$batch <- 1
+metadata_3$batch <- 3
+
+#We will merge the metadata for every sample
+metadata_combined <- rbind(metadata_1, metadata_3)
+
+#We will annotate the ID of the mice in the metadata based on the sorting notes and the plate information
+
+metadata_combined <- metadata_combined %>%
+  mutate(Mouse.ID = case_when(
+    Plate.ID == 11280577 & Column %in% c(1:7, 22) ~ "Mouse P23-3-1-2 WT",
+    Plate.ID == 11280577 & Column %in% c(8:14, 23) ~ "Mouse P23-3-1-3 WT",
+    Plate.ID == 11280577 & Column %in% c(15:21, 24) ~ "Mouse P23-4-2-4 WT",
+
+    Plate.ID == 11280585 & Column %in% 1:6 ~ "Mouse P23-5-1-8 WT",
+    Plate.ID == 11280585 & Column %in% c(19,20,21) & Row %in% 1:8 ~ "Mouse P23-5-1-8 WT",
+
+    Plate.ID == 11280585 & Column %in% 7:12 ~ "Mouse P23-5-1-9 WT",
+    Plate.ID == 11280585 & Column %in% c(19,20,21) & Row %in% 9:16 ~ "Mouse P23-5-1-9 WT",
+
+    Plate.ID == 11280585 & Column %in% c(13,14,15) ~ "Mouse P23-5-1-10 WT",
+    Plate.ID == 11280585 & Column %in% c(22,23,24) & Row %in% 1:8 ~ "Mouse P23-5-1-10 WT",
+
+    Plate.ID == 11280585 & Column %in% c(16,17,18) ~ "Mouse P23-5-1-11 WT",
+    Plate.ID == 11280585 & Column %in% c(22,23,24) & Row %in% 9:16 ~ "Mouse P23-5-1-11 WT",
+    
+    Plate.ID == 348  & Group == "BCR_ABL_7d" ~ "Mouse 1 BCR-ABL-7d",
+    Plate.ID == 348  & Group == "WT" ~ "Mouse 2 WT",
+    
+    Plate.ID == 11280344  & Group == "BCR_ABL_7d" ~ "Mouse 23HQ25_8_M BCR_ABL_7d",
+    Plate.ID == 11280344  & Group == "BCR_WT" ~ "Mouse 23HQ25_7_F BCR_WT",
+    
+    Plate.ID == 11280345  & Group == "BCR_ABL_7d" ~ "Mouse 23HQ25_8_M BCR_ABL_7d",
+    Plate.ID == 11280345  & Group == "BCR_WT" ~ "Mouse 23HQ25_7_F BCR_WT",
+
+    TRUE ~ NA_character_
+  ))
+```
+
+
+## Load data into Seurat 
+```{r}
+
+#First we will create a seurat object containing independent samples
+dat.seurat_1 <- CreateSeuratObject(counts = df_1, meta.data = metadata_1, min.cells = 10, min.features = 0)
+dat.seurat_3 <- CreateSeuratObject(counts = df_3, meta.data = metadata_3, min.cells = 10, min.features = 0)
+
+#In order to create independent samples first we need to merge the count matrices (df_1 and df_2)
+df_combined <- merge(df_1, df_3, by = "row.names", all = FALSE)
+rownames(df_combined) <- df_combined$Row.names
+df_combined <- df_combined[,-1]
+
+#Finally we will create an Seurat object containing the from the combined count matrix and the combined metadata
+dat.seurat.combined <- CreateSeuratObject(counts = df_combined, meta.data = metadata_combined, min.cells = 10, min.features = 0)
+
+
+#Remove the plate "11280345" from the batch 3, it is the only plate that sorted B-cells, T-cells, M-cells, NK-cells, therefore I will focuss in the Cd49b+, Cd49b-, Cd150-, MkP, LMPP and GMP populations
+dat.seurat.combined <- subset(dat.seurat.combined, Plate.ID != "11280345")
+
+#rm(df_1, df_2, df_3, metadata_1, metadata_2, metadata_3, df_combined, metadata_combined)
+
+#Get the PlateIDs from the Seurat metadata
+unique(dat.seurat.combined@meta.data$Plate.ID)
+
+#In order to easy the comprehension I will change the name of the plates: 
+dat.seurat.combined@meta.data <- dat.seurat.combined@meta.data %>%
+  mutate(Plate.ID = recode(Plate.ID,
+    "348" = "Plate.1",
+    "11280344" = "Plate.2",
+    "11280577" = "Plate.4",
+    "11280585" = "Plate.5"
+  ))
+
+#Every plate has different groups proportions in it, I create a new column with the plate and the gorup--> Plate.Group
+dat.seurat.combined@meta.data <- dat.seurat.combined@meta.data %>%
+  mutate(Plate.Group = paste(Plate.ID, Group, sep = "-"))
+
+#Count mitochondrial percentage
+mt_genes <- gene_names$gene_id[grep("^mt-", gene_names$gene_name)]
+dat.seurat.combined@meta.data$percent.mt <- PercentageFeatureSet(dat.seurat.combined, features = mt_genes)
+
+#dat.seurat.combined@meta.data
+#write_xlsx(dat.seurat.combined@meta.data, "../outputs/my_dataframe.xlsx")
+
+```
+
+```{r}
+#Create a function to generate the violin plots for the quality control
+qc_vlnplot <- function(
+  seurat_obj,
+  features,
+  plot_title,
+  threshold
+) {
+  VlnPlot(seurat_obj, features = features) + scale_y_log10() +
+    geom_hline(yintercept = threshold, linetype = "dashed", color = "red") +
+    ggtitle(plot_title) +
+    theme(axis.text.x  = element_blank(),axis.title.x = element_blank(),legend.position = "none")}
+
+#Apply thefunciton to generate the plots without filtering
+qc_vlnplot(dat.seurat.combined, "nCount_RNA", "Ttotal RNA count per cell", 50000)
+qc_vlnplot(dat.seurat.combined, "nFeature_RNA", "Number of genes per cell", 3000)
+qc_vlnplot(dat.seurat.combined, "percent.mt", "Mitochondrial gene counts percentage", 10)
+
+#Subset the datasets excluding low quality cells
+dat.seurat.combined <- subset(dat.seurat.combined, nCount_RNA > 50000)
+dat.seurat.combined <- subset(dat.seurat.combined, nFeature_RNA > 3000)
+dat.seurat.combined <- subset(dat.seurat.combined, percent.mt <10)
+
+#Apply thefunciton again to generate the plots with the filtered dataset
+qc_vlnplot(dat.seurat.combined, "nCount_RNA", "Ttotal RNA count per cell", NA)
+qc_vlnplot(dat.seurat.combined, "nFeature_RNA", "Number of genes per cell", NA)
+qc_vlnplot(dat.seurat.combined, "percent.mt", "Mitochondrial gene counts percentage", NA)
+
+```
+
+#Data processing
+```{r}
+
+#write which population to choose
+dat.seurat.combined <- subset(dat.seurat.combined, Population %in% c("B","CD150neg","CD49bneg", "CD49bpos","GMP","LMPP","MkP","Myeloid","NK","T"))
+dat.seurat.combined$Population <- factor(dat.seurat.combined$Population,
+                                          levels = c("CD49bneg", "CD49bpos", "CD150neg", "LMPP", "GMP", "MkP", "B", "T", "NK", "Myeloid"))
+
+# Filter genes - this functions will filter out genes that are not expressed among all single cells across all samples with al least 300 counts
+#May be this funtion is not very convinient becasue it deoends on how many sampmples are included and the disribution of the gene expression across these sample
+#dat.seurat.combined <- dat.seurat.combined[rowSums(dat.seurat.combined@assays$RNA@layers$counts) > 300,]
+
+# Split object for later integration
+dat.seurat.combined[["RNA"]] <- split(dat.seurat.combined[["RNA"]], f = dat.seurat.combined$Mouse.ID)
+
+# SC Transform
+dat.seurat.combined <- SCTransform(object = dat.seurat.combined, verbose = FALSE, vst.flavor = "v2", return.only.var.genes = FALSE)
+
+# Dimensionality reduction
+dat.seurat.combined <- RunPCA(dat.seurat.combined, features = VariableFeatures(object = dat.seurat.combined), verbose = FALSE)
+dat.seurat.combined <- RunUMAP(dat.seurat.combined, dims = 1:20, verbose = FALSE)
+
+#Asign colors to the populations
+my_colours <- c("CD49bneg" = "#70193b", "CD49bpos" = "#ff6484", "CD150neg" = "#e09e47", "LMPP" = "#ff7206", "GMP" = "#70bd5e", "MkP" = "#9620d7")
+
+#Run the Umap plots with different groups
+DimPlot(dat.seurat.combined, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Population", cols = my_colours)
+DimPlot(dat.seurat.combined, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Group")
+DimPlot(dat.seurat.combined, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Plate.ID")
+DimPlot(dat.seurat.combined, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Plate.Group")
+DimPlot(dat.seurat.combined, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Mouse.ID")
+
+```
+
+# Integrate plates based on Batch with CCA or harmony Integration
+```{r}
+
+#Run CCA and harmony integraion methods
+dat.seurat.combined <- IntegrateLayers(dat.seurat.combined, method = CCAIntegration, normalization.method = "SCT", orig.reduction = "pca", new.reduction = "cca", verbose = FALSE,k.weight = 20,dims = 1:20)
+dat.seurat.combined <- IntegrateLayers(dat.seurat.combined, method = HarmonyIntegration, normalization.method = "SCT", orig.reduction = "pca", new.reduction = "harmony", verbose = FALSE)
+
+#re-join layers after integration, when we want ot have all the assays in the same matrix
+#dat.seurat.combined[["RNA"]] <- JoinLayers(dat.seurat.combined[["RNA"]])
+
+dat.seurat.combined <- RunUMAP(dat.seurat.combined, reduction = "cca", dims = 1:20, verbose = FALSE, reduction.name = "umap_cca")
+dat.seurat.combined <- RunUMAP(dat.seurat.combined, reduction = "harmony", dims = 1:20, verbose = FALSE, reduction.name = "umap_harmony")
+
+#PLot UMAPs with cca integration
+DimPlot(dat.seurat.combined, reduction = "umap_cca", label = FALSE, repel = TRUE, group.by = "Population", cols = my_colours)
+DimPlot(dat.seurat.combined, reduction = "umap_cca", label = FALSE, repel = TRUE, group.by = "Group")
+DimPlot(dat.seurat.combined, reduction = "umap_cca", label = FALSE, repel = TRUE, group.by = "Plate.ID")
+DimPlot(dat.seurat.combined, reduction = "umap_cca", label = FALSE, repel = TRUE, group.by = "Plate.Group")
+DimPlot(dat.seurat.combined, reduction = "umap_cca", label = FALSE, repel = TRUE, group.by = "Mouse.ID")
+
+#Plot UMAPs with Harmony integration
+DimPlot(dat.seurat.combined, reduction = "umap_harmony", label = FALSE, repel = TRUE, group.by = "Population", cols = my_colours)
+DimPlot(dat.seurat.combined, reduction = "umap_harmony", label = FALSE, repel = TRUE, group.by = "Group")
+DimPlot(dat.seurat.combined, reduction = "umap_harmony", label = FALSE, repel = TRUE, group.by = "Plate.ID")
+DimPlot(dat.seurat.combined, reduction = "umap_harmony", label = FALSE, repel = TRUE, group.by = "Plate.Group")
+DimPlot(dat.seurat.combined, reduction = "umap_harmony", label = FALSE, repel = TRUE, group.by = "Mouse.ID")
+
+```
+
+#Pseudo bulk, Pearson correlation coeficient and PCA
+
+```{r}
+pseudobulk_aggr <- function(
+  seurat_obj,
+  split.by,
+  title
+) {
+  #Aggregate samples using pseudobulk reduction - the sample will be grouped by "Group"
+seurat_obj_pseudo <- AggregateExpression(seurat_obj, assays = "RNA", return.seurat = TRUE,  group.by = split.by)
+
+#Get the count matrix without populations
+seurat_obj_pseudo_counts <- as.matrix(GetAssayData(seurat_obj_pseudo, assay = "RNA", layer = "counts"))
+
+#Calculate Pearson corelation coefficient (p) without populations
+cor_matrix_pearson <- cor(seurat_obj_pseudo_counts, method = "pearson")
+print(cor_matrix_pearson)
+
+#Generate heatmap with p
+pheatmap(cor_matrix_pearson, main = title, cluster_rows = FALSE, cluster_cols = FALSE)
+
+#PCA
+mydgelist <- DGEList(seurat_obj_pseudo_counts)
+
+#First add the row names into a column
+mydgelist$samples <- mydgelist$samples %>%  rownames_to_column("sample") 
+
+#Duplicate this column
+mydgelist$samples$split <- mydgelist$samples$sample
+
+#Separate this column into Group and Population and bring the initial rowname back to the rowname of the metadata 
+mydgelist$samples <- mydgelist$samples %>% separate(split, into = split.by, sep = "_") %>% column_to_rownames("sample")
+#Run principal component analysis
+res.pca <- pca(mydgelist$counts, metadata = mydgelist$samples, removeVar = 0.1) #To run this funtion the metadata object need to have the name of the samples as a rownames()
+return(res.pca)
+}
+
+Pseudo_PCA <- function(res.pca, title, colby, shape)
+  { 
+  biplot(res.pca, # Use the PCA results renerated by the costume pseudobulk_aggr() function
+       colby = colby, #use colby cariable to asign a color
+       shape = shape, #use the shape variable to asign a shape
+       lab = NULL,                        #Remove the label of the points
+       legendPosition = "right",          #indicate where the legend is going to be
+       pointSize = 2, 
+       title = title  # The variable title will introduce the title of the plot
+       ) + 
+  scale_x_continuous(labels = scientific)  +
+  scale_y_continuous(labels = scientific)
+}
+
+#Split by Group
+
+res.pca <- pseudobulk_aggr(dat.seurat.combined, "Group", "Pearson Correlation Analysis between Groups")
+Pseudo_PCA(res.pca,  "PCA Groups", colby= "Group", shape= NULL)
+
+#Split by Group and Population
+res.pca <- pseudobulk_aggr(dat.seurat.combined, c("Group", "Population"), "Pearson Correlation Analysis between Groups and Population")
+Pseudo_PCA(res.pca,  "PCA Groups and Populations", colby= "Group", shape= "Population")
+
+#Split by Population, Plate.ID and Mouse.ID
+res.pca <- pseudobulk_aggr(dat.seurat.combined, c("Group", "Population", "Plate.ID"), "Pearson Correlation Analysis between Groups")
+Pseudo_PCA(res.pca,  "PCA Populations", colby= "Group", shape= "Plate.ID")
+Pseudo_PCA(res.pca,  "PCA Populations", colby= "Group", shape= "Population")
+
+#Split by Group, Plate.ID and Mouse.ID
+res.pca <- pseudobulk_aggr(dat.seurat.combined, c("Group", "Plate.ID", "Mouse.ID"), "Pearson Correlation Analysis between Groups")
+Pseudo_PCA(res.pca,  "PCA Populations", colby= "Mouse.ID", shape= "Group")
+Pseudo_PCA(res.pca,  "PCA Populations", colby= "Mouse.ID", shape= "Plate.ID")
+
+```

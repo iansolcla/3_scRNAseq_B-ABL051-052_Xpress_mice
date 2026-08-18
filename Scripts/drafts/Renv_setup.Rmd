@@ -1,0 +1,71 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+#Once the prject is open the packages are saves in:
+#  '/Users/ian.soldevilla.claramunt/Library/CloudStorage/OneDrive-KarolinskaInstitutet/ISC - Private - Karolinska Institute/5. Experiment/scRNAseq analysis/Renv_trial/renv/library/macos/R-4.5/aarch64-apple-darwin20/renv'
+
+```{r}
+install.packages("dplyr")
+
+```
+- Querying repositories for available source packages ... Done!
+The following package(s) will be installed:
+- cli        [3.6.6]
+- dplyr      [1.2.1]
+- generics   [0.1.4]
+- glue       [1.8.1]
+- lifecycle  [1.0.5]
+- magrittr   [2.0.5]
+- pillar     [1.11.1]
+- pkgconfig  [2.0.3]
+- R6         [2.6.1]
+- rlang      [1.2.0]
+- tibble     [3.3.1]
+- tidyselect [1.2.1]
+- utf8       [1.2.6]
+- vctrs      [0.7.3]
+- withr      [3.0.2]
+These packages will be installed into "~/Library/CloudStorage/OneDrive-KarolinskaInstitutet/ISC - Private - Karolinska Institute/5. Experiment/scRNAseq analysis/Renv_trial/renv/library/macos/R-4.5/aarch64-apple-darwin20".
+
+
+This funcituon will save in the renv.lock file all the packages and the dependencies
+```{r}
+renv::snapshot()
+```
+However dplyr is not present in this file. Bacaus the file was only installed, and the snapshot() function only stores the packages that are loaded with the function library("pakcage_name")
+
+
+```{r}
+#Load library in in R
+library("dplyr")
+
+#Afterwards snapshot() to save the information on the loaded libraries in the renv.lock file
+#Type = all makes sure all the libraries that are loaded are saved in the renv.lock file
+renv::snapshot(type = "all")
+```
+
+#by exporting the renv.lock file we can install all the packages and dependences in a new computer to recapitulate the same analysis
+```{r}
+#Run this exact comand to install all the packages
+renv::restore(rebuild = TRUE, prompt = FALSE)
+
+```
+The packages will be downloaded and installed in the new computer
+Check that this is the case buy loading library(dplyr)
+
+```{r}
+#to check if the files aare installed
+renv::status()
+
+#TO check where the libraries are downloaded
+.libPaths() #SHould be inside the project directory
+```
+
+Load all ther packages with libraries("package_name") and install manually the packages with the specific verssion based on the ren.lock file
+```{r}
+renv::install("package_name@version_number")
+```
+

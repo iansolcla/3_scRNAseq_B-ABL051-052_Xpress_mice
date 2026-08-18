@@ -1,0 +1,428 @@
+---
+title: "Part 1 - QC analysis" 
+Project: "BCRABL+ induced and BCRABL not induced"
+PlateID: 11280344
+output: html_notebook
+---
+
+
+#Install libraries
+```{r}
+#install.packages("dplyr")
+#install.packages("magrittr")
+#install.packages("reshape2")
+#install.packages("ggplot2")
+#install.packages("ggplot2")
+#install.packages("Seurat")
+
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#BiocManager::install("glmGamPoi")
+
+#install.packages("plyr")
+#install.packages("tidyverse")
+
+```
+
+##Usefull comands
+
+
+```{r}
+#Set of unique values in a column of a data frame
+#unique(df$column_name)
+
+#To know which groups are included in our sample
+#unique(metadata_3$Group)
+#To know which cell populations were hashed"
+#unique(metadata_3$Population)
+
+#How many mice were sequenced per group?
+
+
+```
+
+
+## Load libraries
+```{r}
+library(dplyr)
+library(magrittr)
+library(reshape2)
+library(ggplot2)
+library(Seurat)
+library('glmGamPoi')
+library(dplyr)
+library(tidyverse)
+```
+
+#Set working directory
+```{r}
+
+#setwd("~/Library/CloudStorage/OneDrive-KarolinskaInstitutet/ISC - Private - Karolinska Institute/5. Experiment/scRNAseq analysis/scRNAseq_B-ABL051-052/Robert Månsson's files - PROJECT Xpress scRNAseq HSCs (Sidinh collaboration)")
+
+```
+
+
+## Load input data
+
+#What should I load? Xpress.UMIcounts.exon.txt, Xpress.readcounts.exon.txt, barcode_annotation.txt, Xpress.UMIcounts.intron_exon.txt, Xpress.readcounts.intron_exon.txt, Xpress.gene_names.txt or Xpress.readspercell.txt
+
+#Pilot plate
+```{r}
+
+df_1 <- read.table("../Data/RawData/SS3xpress_B-ABL_pilot_20240115/zUMIs_output/Xpress.readcounts.intron_exon.txt", header = TRUE, sep = "\t")
+
+barcode_annotation_1 <-read.table("../Data/RawData/SS3xpress_B-ABL_pilot_20240115/zUMIs_output/barcode_annotation.txt", header = T, sep = "\t")
+
+gene_names_1 <- read.table("../Data/RawData/SS3xpress_B-ABL_pilot_20240115/zUMIs_output/Xpress.gene_names.txt", header = TRUE, sep = "\t")
+
+barcode_annotation_1$Well_plateID <- paste(barcode_annotation_1$WellID, barcode_annotation_1$plateBC, sep = "_")
+colnames(df_1) <- barcode_annotation_1$Well_plateID[match(colnames(df_1),barcode_annotation_1$XC_DNBPE)]
+df_1 <- df_1[,order(colnames(df_1))]
+
+## Metadata pilot plate
+metadata_1 <- read.csv2("../Data/RawData/SS3xpress_B-ABL_pilot_20240115/SS3xpress_metadata.csv", header = TRUE)
+metadata_1 <- metadata_1[order(metadata_1$Plate.ID),]
+metadata_1 <- metadata_1[order(metadata_1$Well),]
+rownames(metadata_1) <- colnames(df_1)
+
+
+x <- barcode_annotation_1$Well_plateID[match(colnames(df_1),barcode_annotation_1$XC_DNBPE)]
+```
+
+#Batch 2
+```{r}
+## Batch 2
+df_2 <- read.table("../Data/RawData/SS3xpress/zUMIs_output/Xpress.readcounts.intron_exon.txt", header = TRUE, sep = "\t")
+# df_2 <- read.table("../Data/RawData/SS3xpress/zUMIs_output/Xpress.UMIcounts.intron_exon.txt", header = TRUE, sep = "\t")
+barcode_annotation_2 <- read.table("../Data/RawData/SS3xpress/zUMIs_output/barcode_annotation.txt", header = T, sep = "\t")
+gene_names_2 <- read.table("../Data/RawData/SS3xpress/zUMIs_output/Xpress.gene_names.txt", header = TRUE, sep = "\t")
+
+barcode_annotation_2$Well_plateID <- paste(barcode_annotation_2$WellID, barcode_annotation_2$plateID, sep = "_")
+colnames(df_2) <- barcode_annotation_2$Well_plateID[match(colnames(df_2),barcode_annotation_2$XC_DNBPE)]
+df_2 <- df_2[,order(colnames(df_2))]
+
+## Metadata batch 2
+metadata_2 <- read.csv2("../Data/RawData/SS3xpress/SS3xpress_annotation_with_transplantation_plates.csv", header = TRUE)
+metadata_2 <- metadata_2[order(metadata_2$Plate.ID),]
+metadata_2 <- metadata_2[order(metadata_2$Well),]
+rownames(metadata_2) <- colnames(df_2)
+metadata_2$Age <- case_when(metadata_2$Plate.ID %in% c(196,197,198,199,707,709) ~ "Old",
+                            metadata_2$Plate.ID %in% c(192,708) ~ "Adult",
+                            TRUE ~ "NA")
+metadata_2$Group <- case_when(metadata_2$Plate.ID %in% c(196,198) ~ "WT",
+                              metadata_2$Plate.ID %in% c(197,199,192,708) ~ "BCR_ABL_7d",
+                              metadata_2$Plate.ID %in% c(707,709) ~ "BCR_ABL_14d",
+                              metadata_2$Plate.ID %in% c(200,710) ~ "HET121 transplantation",
+                              TRUE ~ "NA")
+```
+
+#Batch 3
+```{r}
+## Batch 3
+df_3 <- read.table("../Data/RawData/SS3xpress_B-ABL_051-052_20250617/zUMIs_output/Xpress.readcounts.intron_exon.txt", header = TRUE, sep = "\t")
+
+barcode_annotation_3 <-read.table("../Data/RawData/SS3xpress_B-ABL_051-052_20250617/zUMIs_output/barcode_annotation.txt", header = T, sep = "\t")
+gene_names_3 <- read.table("../Data/RawData/SS3xpress_B-ABL_051-052_20250617/zUMIs_output/Xpress.gene_names.txt", header = TRUE, sep = "\t")
+
+barcode_annotation_3$Well_plateID <- paste(barcode_annotation_3$WellID, barcode_annotation_3$plateBC, sep = "_")
+colnames(df_3) <- barcode_annotation_3$Well_plateID[match(colnames(df_3),barcode_annotation_3$XC_DNBPE_TS)]
+df_3 <- df_3[,order(colnames(df_3))]
+
+## Metadata batch 3
+metadata_3 <- read.csv2("../Data/RawData/SS3xpress_B-ABL_051-052_20250617/SS3xpress_metadata.csv", header = TRUE)
+metadata_3 <- metadata_3[order(metadata_3$Plate.ID),]
+metadata_3 <- metadata_3[order(metadata_3$Well),]
+rownames(metadata_3) <- colnames(df_3)
+
+```
+
+```{r}
+# Check if Gene names are the same and if yes only keep one file
+#all.equal(gene_names_1,gene_names_2)
+all.equal(gene_names_1,gene_names_3)
+gene_names <- gene_names_3
+rm(gene_names_1, gene_names_3)
+
+```
+
+
+
+```{r}
+## Batch 3 - B-ABL051-052
+df_2 <- read.table("../Data/RawData/SS3xpress_B-ABL_051-052_20250617/zUMIs_output/Xpress.readcounts.intron_exon.txt", header = TRUE, sep = "\t")
+
+barcode_annotation_2 <- read.table("../Data/RawData/SS3xpress_B-ABL_051-052_20250617/zUMIs_output/barcode_annotation.txt", header = T, sep = "\t")
+
+gene_names_2 <- read.table("../Data//RawData/SS3xpress_B-ABL_051-052_20250617/zUMIs_output/Xpress.gene_names.txt", header = TRUE, sep = "\t")
+
+barcode_annotation_2$Well_plateID <- paste(barcode_annotation_2$WellID, barcode_annotation_2$plateBC, sep = "_")
+colnames(df_2) <- barcode_annotation_2$Well_plateID[match(colnames(df_2),barcode_annotation_2$XC_DNBPE_TS)]
+df_2 <- df_2[,order(colnames(df_2))]
+```
+
+```{r}
+## Quantify mitochondrial genes
+dat.seurat <- CreateSeuratObject(counts = df_1, meta.data = metadata_1, min.cells = 0, min.features = 0)
+mt_genes <- gene_names$gene_id[grep("^mt-", gene_names$gene_name)]
+metadata_1$percent.mt <- PercentageFeatureSet(dat.seurat, features = mt_genes)
+rm(mt_genes, dat.seurat)
+
+
+dat.seurat <- CreateSeuratObject(counts = df_3, meta.data = metadata_3, min.cells = 0, min.features = 0)
+mt_genes <- gene_names$gene_id[grep("^mt-", gene_names$gene_name)]
+metadata_3$percent.mt <- PercentageFeatureSet(dat.seurat, features = mt_genes)
+rm(mt_genes, dat.seurat)
+
+#to retrive the count matrix form a seurat object
+#counts <- GetAssayData(dat.seurat, assay = "RNA", layer = "counts")
+
+```
+
+#Statistics about mapping and exon/intron
+
+```{r}
+# Batch 1
+stats <- read.table("../Data/RawData/SS3xpress_B-ABL_pilot_20240115/zUMIs_output/Xpress.readspercell.txt", header = TRUE, sep = "\t")
+stats$Well_plateID <- barcode_annotation_1$Well_plateID[match(stats$RG,barcode_annotation_1$XC_DNBPE)]
+stats <- dcast(stats, Well_plateID ~ type, value.var = "N")
+stats <- stats[order(stats$Well_plateID),]
+rownames(stats) <- stats$Well_plateID
+stats <- stats[,-1]
+stats$Ambiguity[is.na(stats$Ambiguity)] <- 0
+stats$total <- rowSums(stats)
+stats$percent_intron_exon <- (stats$Intron + stats$Exon) / stats$total * 100
+stats$percent_mapped <- (stats$total - stats$Unmapped) / stats$total * 100
+
+stats$empty <- "No"
+stats$empty[which(rownames(stats) %in% rownames(metadata_1)[which(metadata_1$Population == "empty")])] <- "Yes"
+
+#As a quality control we plot the sequencing reads and the %of introns + exons. Ideally, we get a lot of cells with both and little cells with few of both. 
+ggplot(stats, aes(x = total, y = percent_intron_exon, color = empty)) +
+  geom_point() +
+  theme_classic() +
+  labs(x = "Sequenced Reads", y = "% Intron + Exon") +
+  scale_x_continuous(trans = 'log10') +
+  scale_color_manual(values = c("black", "red"))
+
+ggplot(stats, aes(x = total, y = percent_mapped, color = empty)) +
+  geom_point() +
+  theme_classic() +
+  labs(x = "Sequenced Reads", y = "% Mapped") +
+  scale_x_continuous(trans = 'log10') +
+  scale_color_manual(values = c("black", "red"))
+
+stats$map_grouping <- cut(stats$percent_mapped, breaks = c(0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100))
+
+ggplot(stats, aes(x = total, y = percent_mapped, color = map_grouping)) +
+  geom_point() +
+  theme_classic() +
+  labs(x = "Sequenced Reads", y = "% Mapped") + 
+  scale_x_continuous(trans = 'log10') + 
+  scale_y_continuous(limits = c(0, 100))
+
+metadata_1$map_grouping <- stats$map_grouping[match(rownames(metadata_1),rownames(stats))]
+metadata_1$percent_mapped <- stats$percent_mapped[match(rownames(metadata_1),rownames(stats))]
+
+rm(stats, barcode_annotation_1)
+
+# Quantify cells in each percentage sector
+table(metadata_1$map_grouping)
+
+# Excluding empty wells
+metadata_1[which(metadata_1$Population != "empty"),]$map_grouping %>% table()
+
+# Make a bargraph of this distribution
+ggplot(metadata_1[which(metadata_1$Population != "empty"),], aes(x = map_grouping)) +
+  geom_bar(aes(y = (..count..)/sum(..count..)*100)) +
+  theme_classic() +
+  labs(x = "% Mapped", y = "% of total cells") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("Batch 1")
+
+
+```
+
+#Statistics about mapping and exon/intron
+
+```{r}
+
+# Batch 3
+stats <- read.table("../Data/RawData/SS3xpress_B-ABL_051-052_20250617/zUMIs_output/Xpress.readspercell.txt", header = TRUE, sep = "\t")
+stats$Well_plateID <- barcode_annotation_3$Well_plateID[match(stats$RG,barcode_annotation_3$XC_DNBPE_TS)]
+stats <- dcast(stats, Well_plateID ~ type, value.var = "N")
+stats <- stats[order(stats$Well_plateID),]
+rownames(stats) <- stats$Well_plateID
+stats <- stats[,-1]
+stats$Ambiguity[is.na(stats$Ambiguity)] <- 0
+stats$total <- rowSums(stats)
+stats$percent_intron_exon <- (stats$Intron + stats$Exon) / stats$total * 100
+stats$percent_mapped <- (stats$total - stats$Unmapped) / stats$total * 100
+
+stats$empty <- "No"
+stats$empty[which(rownames(stats) %in% rownames(metadata_3)[which(metadata_3$Population == "empty")])] <- "Yes"
+
+ggplot(stats, aes(x = total, y = percent_intron_exon, color = empty)) +
+  geom_point() +
+  theme_classic() +
+  labs(x = "Sequenced Reads", y = "% Intron + Exon") +
+  scale_x_continuous(trans = 'log10') +
+  scale_color_manual(values = c("black", "red"))+
+  ggtitle("batch 3")
+
+ggplot(stats, aes(x = total, y = percent_mapped, color = empty)) +
+  geom_point() +
+  theme_classic() +
+  labs(x = "Sequenced Reads", y = "% Mapped") +
+  scale_x_continuous(trans = 'log10') +
+  scale_color_manual(values = c("black", "red"))+
+  ggtitle("Batch 3")
+
+stats$map_grouping <- cut(stats$percent_mapped, breaks = c(0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100))
+
+ggplot(stats, aes(x = total, y = percent_mapped, color = map_grouping)) +
+  geom_point() +
+  theme_classic() +
+  labs(x = "Sequenced Reads", y = "% Mapped") + 
+  scale_x_continuous(trans = 'log10') + 
+  scale_y_continuous(limits = c(0, 100))+
+  ggtitle("Batch 3")
+
+metadata_3$map_grouping <- stats$map_grouping[match(rownames(metadata_3),rownames(stats))]
+metadata_3$percent_mapped <- stats$percent_mapped[match(rownames(metadata_3),rownames(stats))]
+
+rm(stats, barcode_annotation_3)
+
+# Quantify cells in each percentage sector
+table(metadata_3$map_grouping)
+
+# Excluding empty wells
+metadata_3[which(metadata_3$Population != "empty"),]$map_grouping %>% table()
+
+# Make a bargraph of this distribution
+ggplot(metadata_3[which(metadata_3$Population != "empty"),], aes(x = map_grouping)) +
+  geom_bar(aes(y = (..count..)/sum(..count..)*100)) +
+  theme_classic() +
+  labs(x = "% Mapped", y = "% of total cells") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggtitle("Batch 3")
+
+```
+
+
+# plots for individual plates
+```{r}
+ggplot(metadata_1[which(metadata_1$Population != "empty"),], aes(x = map_grouping)) +
+    geom_bar(aes(y = (..count..)/sum(..count..)*100)) +
+    theme_classic() +
+    labs(x = "% Mapped", y = "% of total cells") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    ggtitle("Pilot") +
+    ylim(0,100)
+
+
+for(plate in c("11280344","11280345","11280577","11280585")){
+  p <- ggplot(metadata_3[which(metadata_3$Population != "empty" & metadata_3$Plate.ID == plate),], aes(x = map_grouping)) +
+    geom_bar(aes(y = (..count..)/sum(..count..)*100)) +
+    theme_classic() +
+    labs(x = "% Mapped", y = "% of total cells") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    ggtitle("Plate", plate) +
+    ylim(0,100) +
+    scale_x_discrete(drop=F)
+  print(p)
+}
+```
+
+## Load data into Seurat 
+```{r}
+
+#First we will create a seurat object containing independent samples
+dat.seurat_1 <- CreateSeuratObject(counts = df_1, meta.data = metadata_1, min.cells = 10, min.features = 0)
+
+dat.seurat_3 <- CreateSeuratObject(counts = df_3, meta.data = metadata_3, min.cells = 10, min.features = 0)
+
+#In order to create independent samples first we need to merge the count matrixes (df_1 and df_2)
+
+df_combined <- merge(df_1, df_2, by = "row.names", all = FALSE)
+rownames(df_combined) <- df_combined$Row.names
+df_combined <- df_combined[,-1]
+
+#Subsequently we will merge the metadata for every sample
+
+metadata_1$batch <- 1
+metadata_3$batch <- 3
+
+metadata_combined <- rbind(metadata_1, metadata_3)
+
+#Finally we will create an seurat object containing the from the combined count matrix and the combined metadata
+
+dat.seurat.combined <- CreateSeuratObject(counts = df_combined, meta.data = metadata_combined, min.cells = 10, min.features = 0)
+
+#rm(df_1, df_2, df_3, metadata_1, metadata_2, metadata_3, df_combined, metadata_combined)
+```
+
+## QC plots
+```{r}
+QC <- data.frame(dat.seurat_1$nCount_RNA, dat.seurat_1$map_grouping, dat.seurat_1$percent_mapped, dat.seurat_1$nFeature_RNA)
+colnames(QC) <- c("ncount", "map_grouping","percent_mapped", "nfeature")
+
+ggplot(QC, aes(x = ncount, y = percent_mapped, colour = map_grouping)) +
+  geom_point() +
+  theme_classic() +
+  scale_x_log10() +
+  labs(title = "QC cells - Pilot", x = "Library size", y = "% Mapped")
+
+
+QC <- data.frame(dat.seurat_3$nCount_RNA, dat.seurat_3$map_grouping, dat.seurat_3$percent_mapped, dat.seurat_3$nFeature_RNA)
+colnames(QC) <- c("ncount", "map_grouping", "percent_mapped", "nfeature")
+
+ggplot(QC, aes(x = ncount, y = percent_mapped, colour = map_grouping)) +
+  geom_point() +
+  theme_classic() +
+  scale_x_log10() +
+  labs(title = "QC cells - Batch 3", x = "Library size", y = "% Mapped")
+
+rm(QC)
+```
+
+## More QC plots for the plates
+```{r}
+QC <- data.frame(dat.seurat.combined$nCount_RNA, dat.seurat.combined$nFeature_RNA, dat.seurat.combined$Plate.ID, dat.seurat.combined$map_grouping, dat.seurat.combined$percent_mapped)
+colnames(QC) <- c("ncount", "nfeature", "Plate.ID", "map_grouping", "percent_mapped")
+QC$empty <- ifelse(dat.seurat.combined$Population == "empty", "empty", "not_empty")
+QC$Plate.ID <- as.factor(QC$Plate.ID)
+
+ggplot(QC, aes(x = ncount, group = empty, colour = empty)) + 
+  geom_density() + 
+  scale_x_log10() + 
+  theme_classic() +
+  geom_vline(xintercept = 50000)
+
+ggplot(QC, aes(x = nfeature, group = empty, colour = empty)) + 
+  geom_density() + 
+  scale_x_log10() + 
+  theme_classic() +
+  geom_vline(xintercept = 3000)
+
+ggplot(QC, aes(x = ncount, y = nfeature, color = empty)) + 
+  geom_point() +
+  geom_point(data = QC[QC$empty == "empty",], colour = "red") +
+  scale_x_log10() + 
+  scale_y_log10() + 
+  theme_classic() + 
+  geom_vline(xintercept = 50000) +
+  geom_hline(yintercept = 3000) +
+  facet_wrap(~Plate.ID)
+
+ggplot(QC, aes(x = ncount, y = nfeature, color = map_grouping)) + 
+  geom_point() +
+  scale_x_log10() + 
+  scale_y_log10() + 
+  theme_classic() +
+  geom_vline(xintercept = 50000) +
+  geom_hline(yintercept = 3000) +
+  facet_wrap(~Plate.ID) +
+  labs(x = "Library size", y = "Number of expressed genes")
+
+rm(QC)
+```

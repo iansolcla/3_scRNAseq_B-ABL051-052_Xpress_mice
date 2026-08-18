@@ -1,0 +1,315 @@
+---
+title: "Part 2 - Data processing"
+Project: "BCRABL+ induced and BCRABL not induced"
+output: html_notebook
+---
+
+
+install.packages("pheatmap")
+install.packages("factoextra")
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("edgeR")
+
+install.packages("edgeR")
+
+
+
+
+```{r}
+## Load libraries
+
+library(dplyr)
+library(magrittr)
+library(reshape2)
+library(ggplot2)
+library(Seurat)
+library('glmGamPoi')
+library(tidyverse)
+
+```
+
+
+
+# Data processing
+```{r}
+#dat.seurat_3_filtered
+#dat.seurat_3
+
+
+#dim(GetAssayData(dat.seurat_3, assay = "RNA", layer = "counts"))
+dat.seurat_3 <- subset(dat.seurat_3, nCount_RNA > 50000)
+dat.seurat_3 <- subset(dat.seurat_3, nFeature_RNA > 3000)
+
+dat.seurat_3 <- subset(dat.seurat_3, Population %in% c("B","CD150neg","CD49bneg", "CD49bpos","GMP","LMPP","MkP","Myeloid","NK","T"))
+dat.seurat_3$Population <- factor(dat.seurat_3$Population,
+                                          levels = c("CD49bneg", "CD49bpos", "CD150neg", "LMPP", "GMP", "MkP", "B", "T", "NK", "Myeloid"))
+
+# Filter genes
+dat.seurat_3 <- dat.seurat_3[rowSums(dat.seurat_3@assays$RNA@layers$counts) > 300,]
+
+dat.seurat_3 <- SCTransform(object = dat.seurat_3, verbose = FALSE, vst.flavor = "v2", return.only.var.genes = FALSE)
+
+dat.seurat_3 <- RunPCA(dat.seurat_3, features = VariableFeatures(object = dat.seurat_3), verbose = FALSE)
+dat.seurat_3 <- RunUMAP(dat.seurat_3, dims = 1:20, verbose = FALSE)
+
+my_colours <- c("CD49bneg" = "#70193b", "CD49bpos" = "#ff6484", "CD150neg" = "#e09e47", "LMPP" = "#ff7206", "GMP" = "#70bd5e", "MkP" = "#9620d7", "B" = "#014784", "T" = "#9ca6f1", "NK" = "#00bbd6", "Myeloid" = "#4a6800", "transplanted" = "grey")
+
+DimPlot(dat.seurat_3, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Population", cols = my_colours)
+DimPlot(dat.seurat_3, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Group")
+```
+
+```{r}
+p <- DimPlot(dat.seurat_3, reduction = "umap", label = FALSE, repel = TRUE, group.by = "Population", cols = my_colours)
+
+HoverLocator(p, information = FetchData(object = dat.seurat_3, vars = 'Well'))
+```
+
+# Make clusters and find markers per hasshed population
+```{r}
+dat.seurat_3.markers.population <- FindAllMarkers(dat.seurat_3, only.pos = TRUE, min.pct = 0.5, logfc.threshold = 0.5, group.by = "Population")
+dat.seurat_3.markers.population <- dat.seurat_3.markers.population[dat.seurat_3.markers.population$p_val_adj < 0.01, ]
+top10_3.population <- dat.seurat_3.markers.population %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+
+top10_3.population$gene_name <- gene_names$gene_name[match(top10_3.population$gene,gene_names$gene_id,top10_3.population$gene)]
+
+DoHeatmap(dat.seurat_3, features = top10_3.population$gene, group.by = "Population") +
+  scale_fill_gradientn(colors = c("blue", "black", "yellow")) +
+  theme(text = element_text(size = 10)) +
+  scale_y_discrete(labels = rev(c(gene_names$gene_name[match(top10_3.population$gene,gene_names$gene_id,top10_3.population$gene)])))
+```
+
+# Make clusters and find markers per group
+```{r}
+dat.seurat_3.markers.group <- FindAllMarkers(dat.seurat_3, only.pos = TRUE, min.pct = 0.5, logfc.threshold = 0.5, group.by = "Group")
+dat.seurat_3.markers.group <- dat.seurat_3.markers.group[dat.seurat_3.markers.group$p_val_adj < 0.01, ]
+top10_3.group <- dat.seurat_3.markers.group %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+
+top10_3.group$gene_name <- gene_names$gene_name[match(top10_3.group$gene,gene_names$gene_id,top10_3.group$gene)]
+
+DoHeatmap(dat.seurat_3, features = top10_3.group$gene, group.by = "Group") +
+  scale_fill_gradientn(colors = c("blue", "black", "yellow")) +
+  theme(text = element_text(size = 10)) +
+  scale_y_discrete(labels = rev(c(gene_names$gene_name[match(top10_3.group$gene,gene_names$gene_id,top10_3.group$gene)])))
+```
+#Pseudobulk reduction
+
+#Run Pearson correlation analysis between groups
+
+```{r}
+#Check bulk RNA seq pipelie for PEarson correlation analysis and scRNAseq script fot pseudobulk
+#From chat gpt
+
+#Extract expression data
+
+expr <- GetAssayData(
+  dat.seurat_3,
+  assay = "RNA",
+  layer = "counts"   # log-normalized expression
+)
+
+#Aggregate expression by group (pseudobulk)
+
+dat.seurat_3@meta.data
+
+pseudo_3 <- AggregateExpression(dat.seurat_3, assays = "RNA", return.seurat = T, group.by = "Group")
+
+expr <- GetAssayData(
+  pseudo_3,
+  assay = "RNA",
+  layer = "counts"   # log-normalized expression
+)
+Head(expr)
+
+pseudo_neurons$celltype.stim <- paste(pseudo_neurons$celltypes, pseudo_neurons$status, sep = "_")
+
+Idents(pseudo_neurons) <- "celltype.stim"
+
+pseudo_3 <- FindMarkers(object = pseudo_3, 
+                         ident.1 = "BCR-ABL-7d", 
+                         ident.2 = "BCR-WT",
+                         ident.2 = "WT",
+                         test.use = "DESeq2")
+
+
+FindMarkers(
+  object = pseudo_3,
+  ident.1 = "BCR-ABL-7d",
+  ident.2 = "BCR-WT",
+  test.use = "MAST"
+)
+
+
+
+
+avg.expr <- AverageExpression(
+  dat.seurat_3,
+  assays = "RNA",
+  layer = "data",
+  group.by = group.var,
+  verbose = FALSE
+)$RNA
+
+
+#Filter genes before correlation
+
+genes.use <- VariableFeatures(dat.seurat_3)
+avg.expr <- avg.expr[genes.use, ]
+
+#Run Pearson correlation analysis
+
+cor.matrix <- cor(
+  avg.expr,
+  method = "pearson"
+)
+
+#Visualize correlation
+
+#Option 1
+heatmap(
+  cor.matrix,
+  symm = TRUE,
+  margins = c(8, 8)
+)
+
+
+#Option 2
+library(pheatmap)
+pheatmap(
+  cor.matrix,
+  clustering_distance_rows = "correlation",
+  clustering_distance_cols = "correlation",
+  clustering_method = "average"
+)
+
+
+
+cor(
+  AverageExpression(dat.seurat_3, group.by = "Group")$RNA[
+    VariableFeatures(dat.seurat_3),
+  ],
+  method = "pearson"
+)
+
+
+
+
+```
+
+#Pearson correlation coeficient
+
+```{r, fig.width=8, fig.height=6}
+library(pheatmap)
+as.matrix(pseudo_3$RNA)
+
+
+pseudo_3 <- AggregateExpression(dat.seurat_3, assays = "RNA", group.by = "Group")
+pseudo_3_group_population <- AggregateExpression(dat.seurat_3, assays = "RNA", return.seurat = T, group.by = c("Group","Population"))
+
+pseudo_3_group_population$group.population <- paste(pseudo_3_group_population$Group, pseudo_3_group_population$Population, sep = "_")
+
+pseudo_3_group_population@meta.data
+
+Idents(pseudo_3_group_population) <- "group.population"
+
+pseudo_3_group_population_matrix <- as.matrix(GetAssayData(pseudo_3_group_population, assay = "RNA", layer = "counts"))
+
+cor_matrix_pearson <- cor(pseudo_3_group_population_matrix, method = "pearson")
+cor_matrix_pearson
+pheatmap(cor_matrix_pearson, main = "Pearson Correlation of Samples", cluster_rows = FALSE, cluster_cols = FALSE)
+
+
+```
+
+#PCA of pseudobulk agrupation
+
+```{r}
+#demultiplex data
+
+#plot PCA grouped with hashed samples and group
+
+library(factoextra)
+library(edgeR)
+
+
+
+#Not working
+mydgelist <- DGEList(pseudo_3_group_population_matrix, ,group=c(3,3,3,3,3,3,3,3,3,3,2,2,2,2,2,2,2,2,2,2,1,1,1,1,1,1))
+
+mydgelist <- DGEList(pseudo_3_group_population_matrix)
+
+#mydgelist_samples <- mydgelist$samples %>% rownames_to_column("sample") %>% separate(sample, into =c("genotype", "replicate"))
+
+mydgelist_samples <- mydgelist$samples %>%  rownames_to_column("sample") %>%
+  separate(sample, into = c("Group", "Population"), sep = "_")
+
+mydgelist_cpm <- cpm(counttablematrix_filt)
+
+#Coloured by Group
+
+res.pca <- prcomp(t(mydgelist$counts))
+#colors <- as.factor(str_split(rownames(mydgelist$samples), "_", simplify = TRUE)[,1])
+colors <- mydgelist_samples$Group
+
+fviz_pca_ind(res.pca,
+             palette = "Set1",
+             col.ind = mydgelist_samples$Group,
+             repel = FALSE,    # Avoid text overlapping
+             title = "PCA plot of human data",
+             label ="none",
+             mean.point = FALSE
+             )
+
+
+#Cd49b+, Cd49b-, Cd150-, MkP, LMPP, GMP
+
+#Coloured by Population
+colors <- mydgelist_samples$Population
+
+fviz_pca_ind(res.pca,
+             palette = "Set1",
+             col.ind = mydgelist_samples$Population,
+             repel = FALSE,    # Avoid text overlapping
+             title = "PCA plot of human data",
+             label ="none",
+             mean.point = FALSE
+             )
+
+#Coloured by Group and Population
+
+fviz_pca_ind(res.pca,
+             palette = "Set1",
+             col.ind = mydgelist_samples$Group,
+             habillage = mydgelist_samples$Population,
+             repel = FALSE,    # Avoid text overlapping
+             title = "PCA plot of human data",
+             label ="none",
+             mean.point = FALSE
+             )  +
+  scale_shape_manual(values = c(0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
+
+
+#Lin; B-cells, T-cells, M-cells, NK-cells
+
+
+
+
+
+fviz_pca_ind(
+  res.pca,
+  palette = "Set1",
+  repel = TRUE,
+  title = "PCA plot of human data"
+)
+
+fviz_pca_ind(
+  res.pca,
+  habillage = pseudo_3_group_population$group,  # <- factor variable
+  palette = "Set1",
+  repel = TRUE,
+  title = "PCA plot of human data"
+)
+
+```
+
